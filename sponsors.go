@@ -2,23 +2,24 @@ package main
 
 import (
 	"context"
+	"time"
 
-	"github.com/shurcooL/githubv4"
+	graphql "github.com/hasura/go-graphql-client"
 )
 
 var sponsorsQuery struct {
 	User struct {
-		Login                    githubv4.String
+		Login                    graphql.String
 		SponsorshipsAsMaintainer struct {
-			TotalCount githubv4.Int
+			TotalCount graphql.Int
 			Edges      []struct {
-				Cursor githubv4.String
+				Cursor graphql.String
 				Node   struct {
-					CreatedAt     githubv4.DateTime
+					CreatedAt     time.Time
 					SponsorEntity struct {
-						Typename     githubv4.String `graphql:"__typename"`
-						User         qlUser          `graphql:"... on User"`
-						Organization qlUser          `graphql:"... on Organization"`
+						Typename     graphql.String `graphql:"__typename"`
+						User         qlUser         `graphql:"... on User"`
+						Organization qlUser         `graphql:"... on Organization"`
 					}
 				}
 			}
@@ -31,8 +32,8 @@ func sponsors(count int) []Sponsor {
 
 	var sponsors []Sponsor
 	variables := map[string]interface{}{
-		"username": githubv4.String(username),
-		"count":    githubv4.Int(count),
+		"username": graphql.String(username),
+		"count":    graphql.Int(count),
 	}
 	err := gitHubClient.Query(context.Background(), &sponsorsQuery, variables)
 	if err != nil {
@@ -46,12 +47,12 @@ func sponsors(count int) []Sponsor {
 		case "User":
 			sponsors = append(sponsors, Sponsor{
 				User:      userFromQL(v.Node.SponsorEntity.User),
-				CreatedAt: v.Node.CreatedAt.Time,
+				CreatedAt: v.Node.CreatedAt,
 			})
 		case "Organization":
 			sponsors = append(sponsors, Sponsor{
 				User:      userFromQL(v.Node.SponsorEntity.Organization),
-				CreatedAt: v.Node.CreatedAt.Time,
+				CreatedAt: v.Node.CreatedAt,
 			})
 		}
 	}

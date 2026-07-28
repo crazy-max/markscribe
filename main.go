@@ -1,23 +1,20 @@
 package main
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"io/ioutil"
-	"net/http"
 	"os"
 	"strings"
 	"text/template"
 	"time"
 
 	"github.com/KyleBanks/goodreads"
-	"github.com/shurcooL/githubv4"
-	"golang.org/x/oauth2"
+	graphql "github.com/hasura/go-graphql-client"
 )
 
 var (
-	gitHubClient    *githubv4.Client
+	gitHubClient    *graphql.Client
 	goodReadsClient *goodreads.Client
 	goodReadsID     string
 	username        string
@@ -70,17 +67,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	var httpClient *http.Client
 	gitHubToken := os.Getenv("GITHUB_TOKEN")
 	goodReadsToken := os.Getenv("GOODREADS_TOKEN")
 	goodReadsID = os.Getenv("GOODREADS_USER_ID")
-	if len(gitHubToken) > 0 {
-		httpClient = oauth2.NewClient(context.Background(), oauth2.StaticTokenSource(
-			&oauth2.Token{AccessToken: gitHubToken},
-		))
-	}
 
-	gitHubClient = githubv4.NewClient(httpClient)
+	gitHubClient = newGitHubClient(gitHubToken)
 	goodReadsClient = goodreads.NewClient(goodReadsToken)
 
 	if len(gitHubToken) > 0 {

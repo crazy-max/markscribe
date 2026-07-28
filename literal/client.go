@@ -5,7 +5,7 @@ import (
 	"net/http"
 
 	"github.com/caarlos0/env/v6"
-	"github.com/shurcooL/graphql"
+	graphql "github.com/hasura/go-graphql-client"
 	"golang.org/x/oauth2"
 )
 

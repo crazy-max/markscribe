@@ -3,22 +3,22 @@ package main
 import (
 	"context"
 
-	"github.com/shurcooL/githubv4"
+	graphql "github.com/hasura/go-graphql-client"
 )
 
 var viewerQuery struct {
 	Viewer struct {
-		Login githubv4.String
+		Login graphql.String
 	}
 }
 
 var recentFollowersQuery struct {
 	User struct {
-		Login     githubv4.String
+		Login     graphql.String
 		Followers struct {
-			TotalCount githubv4.Int
+			TotalCount graphql.Int
 			Edges      []struct {
-				Cursor githubv4.String
+				Cursor graphql.String
 				Node   qlUser
 			}
 		} `graphql:"followers(first: $count)"`
@@ -39,8 +39,8 @@ func recentFollowers(count int) []User {
 
 	var users []User
 	variables := map[string]interface{}{
-		"username": githubv4.String(username),
-		"count":    githubv4.Int(count),
+		"username": graphql.String(username),
+		"count":    graphql.Int(count),
 	}
 	err := gitHubClient.Query(context.Background(), &recentFollowersQuery, variables)
 	if err != nil {
