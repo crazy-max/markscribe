@@ -1,13 +1,12 @@
 # markscribe
 
-[![Latest Release](https://img.shields.io/github/release/muesli/markscribe.svg)](https://github.com/muesli/markscribe/releases)
-[![Build Status](https://github.com/muesli/markscribe/workflows/build/badge.svg)](https://github.com/muesli/markscribe/actions)
-[![Go ReportCard](https://goreportcard.com/badge/muesli/markscribe)](https://goreportcard.com/report/muesli/markscribe)
-[![GoDoc](https://godoc.org/github.com/golang/gddo?status.svg)](https://pkg.go.dev/github.com/muesli/markscribe)
+[![Build Status](https://github.com/crazy-max/markscribe/workflows/ci/badge.svg)](https://github.com/crazy-max/markscribe/actions)
 
 Your personal markdown scribe with template-engine and Git(Hub) & RSS powers 📜
 
-You can run markscribe as a GitHub Action: [readme-scribe](https://github.com/muesli/readme-scribe/)
+## Fork
+
+This is a fork of [muesli/markscribe](https://github.com/muesli/markscribe).
 
 ## Usage
 
@@ -21,25 +20,9 @@ Render to a file:
 
 ## Installation
 
-### Packages & Binaries
-
-If you use Brew, you can simply install the package:
-
-    brew install muesli/tap/markscribe
-
-Or download a binary from the [releases](https://github.com/muesli/markscribe/releases)
-page. Linux (including ARM) binaries are available, as well as Debian and RPM
-packages.
-
-### Build From Source
-
-Alternatively you can also build `markscribe` from source. Make sure you have a
-working Go environment (Go 1.16 or higher is required). See the
-[install instructions](https://golang.org/doc/install.html).
-
 To install markscribe, simply run:
 
-    go get github.com/muesli/markscribe
+    go install github.com/crazy-max/markscribe@dev
 
 ## Templates
 
@@ -47,7 +30,7 @@ You can find an example template to generate a GitHub profile README under
 [`templates/github-profile.tpl`](templates/github-profile.tpl). Make sure to fill in (or remove) placeholders,
 like the RSS-feed or social media URLs.
 
-Rendered it looks a little like my own profile page: https://github.com/muesli
+Rendered it looks a little like my own profile page: https://github.com/crazy-max
 
 ## Functions
 
@@ -123,7 +106,7 @@ This function requires GitHub authentication with the following API scopes:
 ### Custom GitHub repository
 
 ```
-{{with repo "muesli" "markscribe"}}
+{{with repo "crazy-max" "markscribe"}}
 Name: {{.Name}}
 Description: {{.Description}}
 URL: {{.URL}}
