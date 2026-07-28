@@ -1,0 +1,45 @@
+name: ci
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'master'
+      - 'dev'
+    tags:
+      - 'v*'
+  pull_request:
+
+env:
+  GO_VERSION: 1.26
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      -
+        name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      -
+        name: Install Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      -
+        name: Download Go modules
+        run: go mod download
+      -
+        name: Build
+        run: go build -v ./...
+      -
+        name: Test
+        run: go test ./...
