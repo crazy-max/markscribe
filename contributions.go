@@ -29,7 +29,7 @@ type recentContributionRepositoriesQuery struct {
 				Cursor graphql.String
 				Node   qlRepository
 			}
-		} `graphql:"repositories(first: $maxRepositories, affiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER], privacy: PUBLIC, orderBy: {field: PUSHED_AT, direction: DESC})"`
+		} `graphql:"repositories(first: $maxRepositories, affiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER], privacy: PUBLIC, isFork: false, orderBy: {field: PUSHED_AT, direction: DESC})"`
 	}
 }
 
