@@ -35,19 +35,18 @@ var recentReposQuery struct {
 }
 
 var recentReleasesQuery struct {
-	User struct {
-		Login                     graphql.String
-		RepositoriesContributedTo struct {
-			TotalCount graphql.Int
-			Edges      []struct {
+	Viewer struct {
+		Login        graphql.String
+		Repositories struct {
+			Edges []struct {
 				Cursor graphql.String
 				Node   struct {
 					qlRepository
 					Releases qlRelease `graphql:"releases(first: 10, orderBy: {field: CREATED_AT, direction: DESC})"`
 				}
 			}
-		} `graphql:"repositoriesContributedTo(first: 100, after:$after includeUserRepositories: true, contributionTypes: COMMIT, privacy: PUBLIC)"`
-	} `graphql:"user(login:$username)"`
+		} `graphql:"repositories(first: $count, affiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER], privacy: PUBLIC, orderBy: {field: PUSHED_AT, direction: DESC})"`
+	}
 }
 
 var repoQuery struct {
@@ -158,44 +157,40 @@ func recentForks(count int) []Repo {
 func recentReleases(count int) []Repo {
 	// fmt.Printf("Finding recent releases...\n")
 
-	var after *graphql.String
+	if count <= 0 {
+		return nil
+	}
+
 	var repos []Repo
+	variables := map[string]interface{}{
+		"count": graphql.Int(recentReleaseRepositoryLimit(count)),
+	}
+	err := gitHubClient.Query(context.Background(), &recentReleasesQuery, variables)
+	if err != nil {
+		panic(fmt.Errorf("querying recent release repository candidates: %w", err))
+	}
 
-	for {
-		variables := map[string]interface{}{
-			"username": graphql.String(username),
-			"after":    after,
-		}
-		err := gitHubClient.Query(context.Background(), &recentReleasesQuery, variables)
-		if err != nil {
-			panic(err)
-		}
+	for _, v := range recentReleasesQuery.Viewer.Repositories.Edges {
+		r := repoFromQL(v.Node.qlRepository)
 
-		// fmt.Printf("%+v\n", query)
-		if len(recentReleasesQuery.User.RepositoriesContributedTo.Edges) == 0 {
+		for _, rel := range v.Node.Releases.Nodes {
+			if rel.IsPrerelease || rel.IsDraft {
+				continue
+			}
+			if rel.TagName == "" || rel.PublishedAt.IsZero() {
+				continue
+			}
+			r.LastRelease = Release{
+				Name:        string(rel.Name),
+				TagName:     string(rel.TagName),
+				PublishedAt: rel.PublishedAt,
+				URL:         string(rel.URL),
+			}
 			break
 		}
 
-		for _, v := range recentReleasesQuery.User.RepositoriesContributedTo.Edges {
-			r := repoFromQL(v.Node.qlRepository)
-
-			for _, rel := range v.Node.Releases.Nodes {
-				if rel.IsPrerelease || rel.IsDraft {
-					continue
-				}
-				if v.Node.Releases.Nodes[0].TagName == "" ||
-					v.Node.Releases.Nodes[0].PublishedAt.IsZero() {
-					continue
-				}
-				r.LastRelease = releaseFromQL(v.Node.Releases)
-				break
-			}
-
-			if !r.LastRelease.PublishedAt.IsZero() {
-				repos = append(repos, r)
-			}
-
-			after = graphql.NewString(v.Cursor)
+		if !r.LastRelease.PublishedAt.IsZero() {
+			repos = append(repos, r)
 		}
 	}
 
@@ -211,6 +206,18 @@ func recentReleases(count int) []Repo {
 		return repos[:count]
 	}
 	return repos
+}
+
+func recentReleaseRepositoryLimit(count int) int {
+	if count <= 0 {
+		return 0
+	}
+
+	limit := count * 10
+	if limit > 50 {
+		return 50
+	}
+	return limit
 }
 
 func repo(owner, name string) Repo {
@@ -232,86 +239,3 @@ func repo(owner, name string) Repo {
 		LastRelease: releaseFromQL(repo.Releases),
 	}
 }
-
-/*
-{
-  user(login: "muesli") {
-    login
-    repositoriesContributedTo(first: 100, includeUserRepositories: true, contributionTypes: COMMIT) {
-      totalCount
-      edges {
-        cursor
-        node {
-          id
-          nameWithOwner
-        }
-      }
-    }
-  }
-}
-
-{
-  user(login: "muesli") {
-    login
-    repositoriesContributedTo(first: 100, includeUserRepositories: true, contributionTypes: COMMIT) {
-      totalCount
-      edges {
-        cursor
-        node {
-          id
-          nameWithOwner
-		  releases(first: 3, orderBy: {field: CREATED_AT, direction: DESC}) {
-          	nodes {
-          	  name
-              PublishedAt
-			  url
-			  isPrerelease
-			  isDraft
-            }
-          }
-        }
-      }
-    }
-  }
-}
-
-{
-  user(login: "muesli") {
-    login
-    repositories(first: 10, privacy: PUBLIC, isFork: false, ownerAffiliations: OWNER, orderBy: {field: CREATED_AT, direction: DESC}) {
-      totalCount
-      edges {
-        cursor
-        node {
-          id
-          nameWithOwner
-        }
-      }
-    }
-  }
-}
-
-{
-  user(login: "muesli") {
-    login
-    contributionsCollection {
-      commitContributionsByRepository {
-        contributions(first: 1) {
-          edges {
-            cursor
-            node {
-              occurredAt
-            }
-          }
-        }
-        repository {
-          id
-		  nameWithOwner
-		  url
-		  description
-        }
-      }
-    }
-  }
-}
-*/
