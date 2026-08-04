@@ -34,7 +34,7 @@ func TestRecentContributionsQueriesRecentRepositoriesAndCommitHistory(t *testing
 			if strings.Contains(query, "commitContributionsByRepository") {
 				t.Fatalf("expected query to avoid commitContributionsByRepository, got %s", req.Query)
 			}
-			if !strings.Contains(query, "repositories(first:$maxRepositories,affiliations:[OWNER,COLLABORATOR,ORGANIZATION_MEMBER],privacy:PUBLIC,orderBy:{field:PUSHED_AT,direction:DESC})") {
+			if !strings.Contains(query, "repositories(first:$maxRepositories,affiliations:[OWNER,COLLABORATOR,ORGANIZATION_MEMBER],privacy:PUBLIC,isFork:false,orderBy:{field:PUSHED_AT,direction:DESC})") {
 				t.Fatalf("expected viewer repositories query, got %s", req.Query)
 			}
 			if got := req.Variables["maxRepositories"]; got != float64(7) {
@@ -185,14 +185,18 @@ func TestRecentContributionQueriesUseTimeScalars(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(repositoriesQuery, "repositoriesContributedTo") {
+	compactRepositoriesQuery := strings.ReplaceAll(repositoriesQuery, " ", "")
+	if strings.Contains(compactRepositoriesQuery, "repositoriesContributedTo") {
 		t.Fatalf("expected query to avoid repositoriesContributedTo, got %s", repositoriesQuery)
 	}
-	if strings.Contains(repositoriesQuery, "commitContributionsByRepository") {
+	if strings.Contains(compactRepositoriesQuery, "commitContributionsByRepository") {
 		t.Fatalf("expected query to avoid commitContributionsByRepository, got %s", repositoriesQuery)
 	}
-	if !strings.Contains(repositoriesQuery, "orderBy") {
+	if !strings.Contains(compactRepositoriesQuery, "orderBy") {
 		t.Fatalf("expected query to order repository candidates by pushed date, got %s", repositoriesQuery)
+	}
+	if !strings.Contains(compactRepositoriesQuery, "isFork:false") {
+		t.Fatalf("expected query to exclude forks, got %s", repositoriesQuery)
 	}
 
 	commitQuery, err := graphql.ConstructQuery(&recentContributionCommitQuery{}, map[string]interface{}{
