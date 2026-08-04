@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 
 	graphql "github.com/hasura/go-graphql-client"
 )
@@ -34,19 +35,22 @@ var recentReposQuery struct {
 	} `graphql:"user(login:$username)"`
 }
 
-var recentReleasesQuery struct {
+type recentReleasesQuery struct {
 	Viewer struct {
 		Login        graphql.String
 		Repositories struct {
 			Edges []struct {
 				Cursor graphql.String
-				Node   struct {
-					qlRepository
-					Releases qlRelease `graphql:"releases(first: 10, orderBy: {field: CREATED_AT, direction: DESC})"`
-				}
+				Node   qlRepository
 			}
 		} `graphql:"repositories(first: $count, affiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER], privacy: PUBLIC, orderBy: {field: PUSHED_AT, direction: DESC})"`
 	}
+}
+
+type recentReleaseQuery struct {
+	Repository struct {
+		Releases qlRelease `graphql:"releases(first: 10, orderBy: {field: CREATED_AT, direction: DESC})"`
+	} `graphql:"repository(owner:$owner, name:$name)"`
 }
 
 var repoQuery struct {
@@ -162,36 +166,24 @@ func recentReleases(count int) []Repo {
 	}
 
 	var repos []Repo
+	var query recentReleasesQuery
 	variables := map[string]interface{}{
 		"count": graphql.Int(recentReleaseRepositoryLimit(count)),
 	}
-	err := gitHubClient.Query(context.Background(), &recentReleasesQuery, variables)
+	err := gitHubClient.Query(context.Background(), &query, variables)
 	if err != nil {
 		panic(fmt.Errorf("querying recent release repository candidates: %w", err))
 	}
 
-	for _, v := range recentReleasesQuery.Viewer.Repositories.Edges {
-		r := repoFromQL(v.Node.qlRepository)
-
-		for _, rel := range v.Node.Releases.Nodes {
-			if rel.IsPrerelease || rel.IsDraft {
-				continue
-			}
-			if rel.TagName == "" || rel.PublishedAt.IsZero() {
-				continue
-			}
-			r.LastRelease = Release{
-				Name:        string(rel.Name),
-				TagName:     string(rel.TagName),
-				PublishedAt: rel.PublishedAt,
-				URL:         string(rel.URL),
-			}
-			break
+	for _, v := range query.Viewer.Repositories.Edges {
+		r := repoFromQL(v.Node)
+		release, ok := recentRelease(string(v.Node.NameWithOwner))
+		if !ok {
+			continue
 		}
 
-		if !r.LastRelease.PublishedAt.IsZero() {
-			repos = append(repos, r)
-		}
+		r.LastRelease = release
+		repos = append(repos, r)
 	}
 
 	sort.Slice(repos, func(i, j int) bool {
@@ -208,14 +200,48 @@ func recentReleases(count int) []Repo {
 	return repos
 }
 
+func recentRelease(nameWithOwner string) (Release, bool) {
+	owner, name, ok := strings.Cut(nameWithOwner, "/")
+	if !ok {
+		return Release{}, false
+	}
+
+	var query recentReleaseQuery
+	variables := map[string]interface{}{
+		"owner": graphql.String(owner),
+		"name":  graphql.String(name),
+	}
+	err := gitHubClient.Query(context.Background(), &query, variables)
+	if err != nil {
+		panic(fmt.Errorf("querying recent releases for %s: %w", nameWithOwner, err))
+	}
+
+	for _, rel := range query.Repository.Releases.Nodes {
+		if rel.IsPrerelease || rel.IsDraft {
+			continue
+		}
+		if rel.TagName == "" || rel.PublishedAt.IsZero() {
+			continue
+		}
+		return Release{
+			Name:        string(rel.Name),
+			TagName:     string(rel.TagName),
+			PublishedAt: rel.PublishedAt,
+			URL:         string(rel.URL),
+		}, true
+	}
+
+	return Release{}, false
+}
+
 func recentReleaseRepositoryLimit(count int) int {
 	if count <= 0 {
 		return 0
 	}
 
-	limit := count * 10
-	if limit > 50 {
-		return 50
+	limit := count + 10
+	if limit > 20 {
+		return 20
 	}
 	return limit
 }
