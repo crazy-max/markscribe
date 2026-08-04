@@ -4,29 +4,9 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"time"
 
 	graphql "github.com/hasura/go-graphql-client"
 )
-
-var recentContributionsQuery struct {
-	User struct {
-		Login                   graphql.String
-		ContributionsCollection struct {
-			CommitContributionsByRepository []struct {
-				Contributions struct {
-					Edges []struct {
-						Cursor graphql.String
-						Node   struct {
-							OccurredAt time.Time
-						}
-					}
-				} `graphql:"contributions(first: 1)"`
-				Repository qlRepository
-			} `graphql:"commitContributionsByRepository(maxRepositories: 100)"`
-		}
-	} `graphql:"user(login:$username)"`
-}
 
 var recentPullRequestsQuery struct {
 	User struct {
@@ -81,46 +61,6 @@ var repoQuery struct {
 		}
 		Releases qlRelease `graphql:"releases(last: 1)"`
 	} `graphql:"repository(owner:$owner, name:$name)"`
-}
-
-func recentContributions(count int) []Contribution {
-	// fmt.Printf("Finding recent contributions...\n")
-
-	var contributions []Contribution
-	variables := map[string]interface{}{
-		"username": graphql.String(username),
-	}
-	err := gitHubClient.Query(context.Background(), &recentContributionsQuery, variables)
-	if err != nil {
-		panic(err)
-	}
-
-	for _, v := range recentContributionsQuery.User.ContributionsCollection.CommitContributionsByRepository {
-		// ignore meta-repo
-		if string(v.Repository.NameWithOwner) == fmt.Sprintf("%s/%s", username, username) {
-			continue
-		}
-		if v.Repository.IsPrivate {
-			continue
-		}
-
-		c := Contribution{
-			Repo:       repoFromQL(v.Repository),
-			OccurredAt: v.Contributions.Edges[0].Node.OccurredAt,
-		}
-
-		contributions = append(contributions, c)
-	}
-
-	sort.Slice(contributions, func(i, j int) bool {
-		return contributions[i].OccurredAt.After(contributions[j].OccurredAt)
-	})
-
-	// fmt.Printf("Found %d contributions!\n", len(repos))
-	if len(contributions) > count {
-		return contributions[:count]
-	}
-	return contributions
 }
 
 func recentPullRequests(count int) []PullRequest {

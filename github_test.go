@@ -5,10 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
-
-	graphql "github.com/hasura/go-graphql-client"
 )
 
 func TestGitHubGraphQLClientRetriesTransientStatus(t *testing.T) {
@@ -63,21 +60,5 @@ func TestGitHubGraphQLClientDoesNotRetryPermanentStatus(t *testing.T) {
 	}
 	if attempts != 1 {
 		t.Fatalf("expected 1 attempt, got %d", attempts)
-	}
-}
-
-func TestGitHubQueryConstructionUsesTimeScalars(t *testing.T) {
-	query, err := graphql.ConstructQuery(&recentContributionsQuery, map[string]interface{}{
-		"username": graphql.String("octocat"),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !strings.Contains(query, "occurredAt") {
-		t.Fatalf("expected query to include occurredAt, got %s", query)
-	}
-	if strings.Contains(query, "wall") || strings.Contains(query, "ext") || strings.Contains(query, "loc") {
-		t.Fatalf("expected time.Time to be treated as a scalar, got %s", query)
 	}
 }
