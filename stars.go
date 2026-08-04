@@ -2,18 +2,19 @@ package main
 
 import (
 	"context"
+	"time"
 
-	"github.com/shurcooL/githubv4"
+	graphql "github.com/hasura/go-graphql-client"
 )
 
 var recentStarsQuery struct {
 	User struct {
-		Login githubv4.String
+		Login graphql.String
 		Stars struct {
-			TotalCount githubv4.Int
+			TotalCount graphql.Int
 			Edges      []struct {
-				Cursor    githubv4.String
-				StarredAt githubv4.DateTime
+				Cursor    graphql.String
+				StarredAt time.Time
 				Node      qlRepository
 			}
 		} `graphql:"starredRepositories(first: $count, after:$after, orderBy: {field: STARRED_AT, direction: DESC})"`
@@ -22,13 +23,13 @@ var recentStarsQuery struct {
 
 func recentStars(count int) []Star {
 	var starredRepos []Star
-	var after *githubv4.String
+	var after *graphql.String
 
 outer:
 	for {
 		variables := map[string]interface{}{
-			"username": githubv4.String(username),
-			"count":    githubv4.Int(count),
+			"username": graphql.String(username),
+			"count":    graphql.Int(count),
 			"after":    after,
 		}
 		err := gitHubClient.Query(context.Background(), &recentStarsQuery, variables)
@@ -41,13 +42,13 @@ outer:
 				continue
 			}
 			starredRepos = append(starredRepos, Star{
-				StarredAt: v.StarredAt.Time,
+				StarredAt: v.StarredAt,
 				Repo:      repoFromQL(v.Node),
 			})
 			if len(starredRepos) >= count {
 				break outer
 			}
-			after = githubv4.NewString(v.Cursor)
+			after = graphql.NewString(v.Cursor)
 		}
 	}
 

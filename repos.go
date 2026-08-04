@@ -4,20 +4,21 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"time"
 
-	"github.com/shurcooL/githubv4"
+	graphql "github.com/hasura/go-graphql-client"
 )
 
 var recentContributionsQuery struct {
 	User struct {
-		Login                   githubv4.String
+		Login                   graphql.String
 		ContributionsCollection struct {
 			CommitContributionsByRepository []struct {
 				Contributions struct {
 					Edges []struct {
-						Cursor githubv4.String
+						Cursor graphql.String
 						Node   struct {
-							OccurredAt githubv4.DateTime
+							OccurredAt time.Time
 						}
 					}
 				} `graphql:"contributions(first: 1)"`
@@ -29,11 +30,11 @@ var recentContributionsQuery struct {
 
 var recentPullRequestsQuery struct {
 	User struct {
-		Login        githubv4.String
+		Login        graphql.String
 		PullRequests struct {
-			TotalCount githubv4.Int
+			TotalCount graphql.Int
 			Edges      []struct {
-				Cursor githubv4.String
+				Cursor graphql.String
 				Node   qlPullRequest
 			}
 		} `graphql:"pullRequests(first: $count, orderBy: {field: CREATED_AT, direction: DESC})"`
@@ -42,11 +43,11 @@ var recentPullRequestsQuery struct {
 
 var recentReposQuery struct {
 	User struct {
-		Login        githubv4.String
+		Login        graphql.String
 		Repositories struct {
-			TotalCount githubv4.Int
+			TotalCount graphql.Int
 			Edges      []struct {
-				Cursor githubv4.String
+				Cursor graphql.String
 				Node   qlRepository
 			}
 		} `graphql:"repositories(first: $count, privacy: PUBLIC, isFork: $isFork, ownerAffiliations: OWNER, orderBy: {field: CREATED_AT, direction: DESC})"`
@@ -55,11 +56,11 @@ var recentReposQuery struct {
 
 var recentReleasesQuery struct {
 	User struct {
-		Login                     githubv4.String
+		Login                     graphql.String
 		RepositoriesContributedTo struct {
-			TotalCount githubv4.Int
+			TotalCount graphql.Int
 			Edges      []struct {
-				Cursor githubv4.String
+				Cursor graphql.String
 				Node   struct {
 					qlRepository
 					Releases qlRelease `graphql:"releases(first: 10, orderBy: {field: CREATED_AT, direction: DESC})"`
@@ -71,12 +72,12 @@ var recentReleasesQuery struct {
 
 var repoQuery struct {
 	Repository struct {
-		Description   githubv4.String
-		NameWithOwner githubv4.String
-		IsPrivate     githubv4.Boolean
-		URL           githubv4.String
+		Description   graphql.String
+		NameWithOwner graphql.String
+		IsPrivate     graphql.Boolean
+		URL           graphql.String
 		Stargazers    struct {
-			TotalCount githubv4.Int
+			TotalCount graphql.Int
 		}
 		Releases qlRelease `graphql:"releases(last: 1)"`
 	} `graphql:"repository(owner:$owner, name:$name)"`
@@ -87,7 +88,7 @@ func recentContributions(count int) []Contribution {
 
 	var contributions []Contribution
 	variables := map[string]interface{}{
-		"username": githubv4.String(username),
+		"username": graphql.String(username),
 	}
 	err := gitHubClient.Query(context.Background(), &recentContributionsQuery, variables)
 	if err != nil {
@@ -105,7 +106,7 @@ func recentContributions(count int) []Contribution {
 
 		c := Contribution{
 			Repo:       repoFromQL(v.Repository),
-			OccurredAt: v.Contributions.Edges[0].Node.OccurredAt.Time,
+			OccurredAt: v.Contributions.Edges[0].Node.OccurredAt,
 		}
 
 		contributions = append(contributions, c)
@@ -127,8 +128,8 @@ func recentPullRequests(count int) []PullRequest {
 
 	var pullRequests []PullRequest
 	variables := map[string]interface{}{
-		"username": githubv4.String(username),
-		"count":    githubv4.Int(count + 1), // +1 in case we encounter the meta-repo itself
+		"username": graphql.String(username),
+		"count":    graphql.Int(count + 1), // +1 in case we encounter the meta-repo itself
 	}
 	err := gitHubClient.Query(context.Background(), &recentPullRequestsQuery, variables)
 	if err != nil {
@@ -159,9 +160,9 @@ func recentRepos(count int) []Repo {
 
 	var repos []Repo
 	variables := map[string]interface{}{
-		"username": githubv4.String(username),
-		"count":    githubv4.Int(count + 1), // +1 in case we encounter the meta-repo itself
-		"isFork":   githubv4.Boolean(false),
+		"username": graphql.String(username),
+		"count":    graphql.Int(count + 1), // +1 in case we encounter the meta-repo itself
+		"isFork":   graphql.Boolean(false),
 	}
 	err := gitHubClient.Query(context.Background(), &recentReposQuery, variables)
 	if err != nil {
@@ -189,9 +190,9 @@ func recentForks(count int) []Repo {
 
 	var repos []Repo
 	variables := map[string]interface{}{
-		"username": githubv4.String(username),
-		"count":    githubv4.Int(count + 1), // +1 in case we encounter the meta-repo itself
-		"isFork":   githubv4.Boolean(true),
+		"username": graphql.String(username),
+		"count":    graphql.Int(count + 1), // +1 in case we encounter the meta-repo itself
+		"isFork":   graphql.Boolean(true),
 	}
 	err := gitHubClient.Query(context.Background(), &recentReposQuery, variables)
 	if err != nil {
@@ -217,12 +218,12 @@ func recentForks(count int) []Repo {
 func recentReleases(count int) []Repo {
 	// fmt.Printf("Finding recent releases...\n")
 
-	var after *githubv4.String
+	var after *graphql.String
 	var repos []Repo
 
 	for {
 		variables := map[string]interface{}{
-			"username": githubv4.String(username),
+			"username": graphql.String(username),
 			"after":    after,
 		}
 		err := gitHubClient.Query(context.Background(), &recentReleasesQuery, variables)
@@ -243,7 +244,7 @@ func recentReleases(count int) []Repo {
 					continue
 				}
 				if v.Node.Releases.Nodes[0].TagName == "" ||
-					v.Node.Releases.Nodes[0].PublishedAt.Time.IsZero() {
+					v.Node.Releases.Nodes[0].PublishedAt.IsZero() {
 					continue
 				}
 				r.LastRelease = releaseFromQL(v.Node.Releases)
@@ -254,7 +255,7 @@ func recentReleases(count int) []Repo {
 				repos = append(repos, r)
 			}
 
-			after = githubv4.NewString(v.Cursor)
+			after = graphql.NewString(v.Cursor)
 		}
 	}
 
@@ -274,8 +275,8 @@ func recentReleases(count int) []Repo {
 
 func repo(owner, name string) Repo {
 	variables := map[string]interface{}{
-		"owner": githubv4.String(owner),
-		"name":  githubv4.String(name),
+		"owner": graphql.String(owner),
+		"name":  graphql.String(name),
 	}
 	err := gitHubClient.Query(context.Background(), &repoQuery, variables)
 	if err != nil {

@@ -3,16 +3,16 @@ package main
 import (
 	"context"
 
-	"github.com/shurcooL/githubv4"
+	graphql "github.com/hasura/go-graphql-client"
 )
 
 var gistsQuery struct {
 	User struct {
-		Login githubv4.String
+		Login graphql.String
 		Gists struct {
-			TotalCount githubv4.Int
+			TotalCount graphql.Int
 			Edges      []struct {
-				Cursor githubv4.String
+				Cursor graphql.String
 				Node   qlGist
 			}
 		} `graphql:"gists(first: $count, orderBy: {field: CREATED_AT, direction: DESC})"`
@@ -24,8 +24,8 @@ func gists(count int) []Gist {
 
 	var gists []Gist
 	variables := map[string]interface{}{
-		"username": githubv4.String(username),
-		"count":    githubv4.Int(count),
+		"username": graphql.String(username),
+		"count":    graphql.Int(count),
 	}
 	err := gitHubClient.Query(context.Background(), &gistsQuery, variables)
 	if err != nil {
