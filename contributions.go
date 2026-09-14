@@ -10,7 +10,15 @@ import (
 	graphql "github.com/hasura/go-graphql-client"
 )
 
-const gitHubMaxContributionRepositories = 15
+type contributionPageInfo struct {
+	HasNextPage graphql.Boolean
+	EndCursor   graphql.String
+}
+
+type contributionRepository struct {
+	qlRepository
+	IsFork graphql.Boolean
+}
 
 type gitHubCommitAuthor struct {
 	ID graphql.ID `json:"id,omitempty"`
@@ -25,11 +33,23 @@ type recentContributionRepositoriesQuery struct {
 		ID           graphql.ID
 		Login        graphql.String
 		Repositories struct {
-			Edges []struct {
+			PageInfo contributionPageInfo
+			Edges    []struct {
 				Cursor graphql.String
-				Node   qlRepository
+				Node   contributionRepository
 			}
-		} `graphql:"repositories(first: $maxRepositories, affiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER], privacy: PUBLIC, isFork: false, orderBy: {field: PUSHED_AT, direction: DESC})"`
+		} `graphql:"repositories(first: 20, after: $after, affiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER], privacy: PUBLIC, isFork: false, orderBy: {field: PUSHED_AT, direction: DESC})"`
+	}
+}
+
+type contributionPullRequestsQuery struct {
+	Viewer struct {
+		PullRequests struct {
+			PageInfo contributionPageInfo
+			Nodes    []struct {
+				Repository contributionRepository
+			}
+		} `graphql:"pullRequests(first: 20, after: $after, states: MERGED, orderBy: {field: CREATED_AT, direction: DESC})"`
 	}
 }
 
@@ -56,26 +76,61 @@ func recentContributions(count int) []Contribution {
 		return nil
 	}
 
-	var contributions []Contribution
-	var query recentContributionRepositoriesQuery
-	variables := map[string]interface{}{
-		"maxRepositories": graphql.Int(recentContributionRepositoryLimit(count)),
+	contributions := contributedRepositories()
+	if len(contributions) > count {
+		return contributions[:count]
 	}
-	err := gitHubClient.Query(context.Background(), &query, variables)
-	if err != nil {
-		panic(fmt.Errorf("querying recent contribution repository candidates: %w", err))
+	return contributions
+}
+
+// Discover candidates without GitHub's expensive contribution aggregates. Keep
+// history lookups separate, and rank only after every candidate page is read.
+func contributedRepositories() []Contribution {
+	var candidates []contributionRepository
+	var author gitHubCommitAuthor
+	var login string
+	var after *graphql.String
+	for {
+		var query recentContributionRepositoriesQuery
+		if err := gitHubClient.Query(context.Background(), &query, map[string]interface{}{"after": after}); err != nil {
+			panic(fmt.Errorf("querying recent contribution repository candidates: %w", err))
+		}
+		author.ID = query.Viewer.ID
+		login = string(query.Viewer.Login)
+		for _, edge := range query.Viewer.Repositories.Edges {
+			candidates = append(candidates, edge.Node)
+		}
+		page := query.Viewer.Repositories.PageInfo
+		if !page.HasNextPage {
+			break
+		}
+		after = graphql.NewString(page.EndCursor)
 	}
 
-	login := string(query.Viewer.Login)
-	author := gitHubCommitAuthor{ID: query.Viewer.ID}
-	for _, edge := range query.Viewer.Repositories.Edges {
-		repo := edge.Node
-		if string(repo.NameWithOwner) == login+"/"+login {
+	// Merged PRs discover upstream repositories without requiring membership.
+	after = nil
+	for {
+		var query contributionPullRequestsQuery
+		if err := gitHubClient.Query(context.Background(), &query, map[string]interface{}{"after": after}); err != nil {
+			panic(fmt.Errorf("querying contribution pull request repositories: %w", err))
+		}
+		for _, pr := range query.Viewer.PullRequests.Nodes {
+			candidates = append(candidates, pr.Repository)
+		}
+		page := query.Viewer.PullRequests.PageInfo
+		if !page.HasNextPage {
+			break
+		}
+		after = graphql.NewString(page.EndCursor)
+	}
+
+	var contributions []Contribution
+	seen := make(map[graphql.String]bool)
+	for _, repo := range candidates {
+		if bool(repo.IsPrivate) || bool(repo.IsFork) || string(repo.NameWithOwner) == login+"/"+login || seen[repo.NameWithOwner] {
 			continue
 		}
-		if repo.IsPrivate {
-			continue
-		}
+		seen[repo.NameWithOwner] = true
 
 		occurredAt, ok := recentContributionOccurredAt(string(repo.NameWithOwner), author)
 		if !ok {
@@ -83,7 +138,7 @@ func recentContributions(count int) []Contribution {
 		}
 
 		contributions = append(contributions, Contribution{
-			Repo:       repoFromQL(repo),
+			Repo:       repoFromQL(repo.qlRepository),
 			OccurredAt: occurredAt,
 		})
 	}
@@ -92,9 +147,6 @@ func recentContributions(count int) []Contribution {
 		return contributions[i].OccurredAt.After(contributions[j].OccurredAt)
 	})
 
-	if len(contributions) > count {
-		return contributions[:count]
-	}
 	return contributions
 }
 
@@ -120,16 +172,4 @@ func recentContributionOccurredAt(nameWithOwner string, author gitHubCommitAutho
 		return time.Time{}, false
 	}
 	return commits[0].AuthoredDate, true
-}
-
-func recentContributionRepositoryLimit(count int) int {
-	if count <= 0 {
-		return 0
-	}
-
-	limit := count + 5
-	if limit > gitHubMaxContributionRepositories {
-		return gitHubMaxContributionRepositories
-	}
-	return limit
 }

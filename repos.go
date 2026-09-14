@@ -35,18 +35,6 @@ var recentReposQuery struct {
 	} `graphql:"user(login:$username)"`
 }
 
-type recentReleasesQuery struct {
-	Viewer struct {
-		Login        graphql.String
-		Repositories struct {
-			Edges []struct {
-				Cursor graphql.String
-				Node   qlRepository
-			}
-		} `graphql:"repositories(first: $count, affiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER], privacy: PUBLIC, orderBy: {field: PUSHED_AT, direction: DESC})"`
-	}
-}
-
 type recentReleaseQuery struct {
 	Repository struct {
 		Releases qlRelease `graphql:"releases(first: 10, orderBy: {field: CREATED_AT, direction: DESC})"`
@@ -166,18 +154,9 @@ func recentReleases(count int) []Repo {
 	}
 
 	var repos []Repo
-	var query recentReleasesQuery
-	variables := map[string]interface{}{
-		"count": graphql.Int(recentReleaseRepositoryLimit(count)),
-	}
-	err := gitHubClient.Query(context.Background(), &query, variables)
-	if err != nil {
-		panic(fmt.Errorf("querying recent release repository candidates: %w", err))
-	}
-
-	for _, v := range query.Viewer.Repositories.Edges {
-		r := repoFromQL(v.Node)
-		release, ok := recentRelease(string(v.Node.NameWithOwner))
+	for _, contribution := range contributedRepositories() {
+		r := contribution.Repo
+		release, ok := recentRelease(r.Name)
 		if !ok {
 			continue
 		}
@@ -232,18 +211,6 @@ func recentRelease(nameWithOwner string) (Release, bool) {
 	}
 
 	return Release{}, false
-}
-
-func recentReleaseRepositoryLimit(count int) int {
-	if count <= 0 {
-		return 0
-	}
-
-	limit := count + 10
-	if limit > 20 {
-		return 20
-	}
-	return limit
 }
 
 func repo(owner, name string) Repo {
