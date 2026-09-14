@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log/slog"
 	"time"
 
 	"github.com/mmcdole/gofeed"
@@ -14,6 +15,7 @@ type RSSEntry struct {
 }
 
 func rssFeed(url string, count int) []RSSEntry {
+	defer logOperation("rssFeed", "count", count)()
 	var r []RSSEntry
 
 	fp := gofeed.NewParser()
@@ -23,7 +25,6 @@ func rssFeed(url string, count int) []RSSEntry {
 	}
 
 	for _, v := range feed.Items {
-		// fmt.Printf("%+v\n", v)
 
 		r = append(r, RSSEntry{
 			Title:       v.Title,
@@ -34,6 +35,8 @@ func rssFeed(url string, count int) []RSSEntry {
 			break
 		}
 	}
+
+	slog.Info("Results selected", "kind", "RSS entries", "items", len(r))
 
 	return r
 }

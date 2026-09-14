@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	graphql "github.com/hasura/go-graphql-client"
@@ -28,19 +29,17 @@ var sponsorsQuery struct {
 }
 
 func sponsors(count int) []Sponsor {
-	// fmt.Printf("Finding sponsors...\n")
+	defer logOperation("sponsors", "count", count)()
 
 	var sponsors []Sponsor
 	variables := map[string]interface{}{
 		"username": graphql.String(username),
 		"count":    graphql.Int(count),
 	}
-	err := gitHubClient.Query(context.Background(), &sponsorsQuery, variables)
+	err := queryGitHub(context.Background(), "sponsors", &sponsorsQuery, variables)
 	if err != nil {
 		panic(err)
 	}
-
-	// fmt.Printf("%+v\n", query)
 
 	for _, v := range sponsorsQuery.User.SponsorshipsAsMaintainer.Edges {
 		switch v.Node.SponsorEntity.Typename {
@@ -56,8 +55,7 @@ func sponsors(count int) []Sponsor {
 			})
 		}
 	}
-
-	// fmt.Printf("Found %d sponsors!\n", len(users))
+	slog.Info("Results selected", "kind", "sponsors", "items", len(sponsors))
 	return sponsors
 }
 

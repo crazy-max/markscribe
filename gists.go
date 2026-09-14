@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"log/slog"
 
 	graphql "github.com/hasura/go-graphql-client"
 )
@@ -20,24 +21,21 @@ var gistsQuery struct {
 }
 
 func gists(count int) []Gist {
-	// fmt.Printf("Finding gists...\n")
+	defer logOperation("gists", "count", count)()
 
 	var gists []Gist
 	variables := map[string]interface{}{
 		"username": graphql.String(username),
 		"count":    graphql.Int(count),
 	}
-	err := gitHubClient.Query(context.Background(), &gistsQuery, variables)
+	err := queryGitHub(context.Background(), "gists", &gistsQuery, variables)
 	if err != nil {
 		panic(err)
 	}
-
-	// fmt.Printf("%+v\n", query)
 	for _, v := range gistsQuery.User.Gists.Edges {
 		gists = append(gists, gistFromQL(v.Node))
 	}
-
-	// fmt.Printf("Found %d gists!\n", len(gists))
+	slog.Info("Results selected", "kind", "gists", "items", len(gists))
 	return gists
 }
 

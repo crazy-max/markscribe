@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -47,10 +48,17 @@ type contributionPullRequestsQuery struct {
 		PullRequests struct {
 			PageInfo contributionPageInfo
 			Nodes    []struct {
-				Repository contributionRepository
+				State      graphql.String
+				Repository struct {
+					NameWithOwner graphql.String
+				}
 			}
-		} `graphql:"pullRequests(first: 20, after: $after, states: MERGED, orderBy: {field: CREATED_AT, direction: DESC})"`
+		} `graphql:"pullRequests(first: 20, after: $after)"`
 	}
+}
+
+type contributionRepositoryQuery struct {
+	Repository contributionRepository `graphql:"repository(owner: $owner, name: $name)"`
 }
 
 type recentContributionCommitFragment struct {
@@ -72,27 +80,31 @@ type recentContributionCommitQuery struct {
 }
 
 func recentContributions(count int) []Contribution {
+	defer logOperation("recentContributions", "count", count)()
 	if count <= 0 {
 		return nil
 	}
 
 	contributions := contributedRepositories()
 	if len(contributions) > count {
+		slog.Info("Results selected", "kind", "contribution candidates", "items", len(contributions[:count]))
 		return contributions[:count]
 	}
+	slog.Info("Results selected", "kind", "contribution candidates", "items", len(contributions))
 	return contributions
 }
 
 // Discover candidates without GitHub's expensive contribution aggregates. Keep
 // history lookups separate, and rank only after every candidate page is read.
 func contributedRepositories() []Contribution {
+	defer logOperation("contributedRepositories")()
 	var candidates []contributionRepository
 	var author gitHubCommitAuthor
 	var login string
 	var after *graphql.String
 	for {
 		var query recentContributionRepositoriesQuery
-		if err := gitHubClient.Query(context.Background(), &query, map[string]interface{}{"after": after}); err != nil {
+		if err := queryGitHub(context.Background(), "contributedRepositories", &query, map[string]interface{}{"after": after}); err != nil {
 			panic(fmt.Errorf("querying recent contribution repository candidates: %w", err))
 		}
 		author.ID = query.Viewer.ID
@@ -101,39 +113,66 @@ func contributedRepositories() []Contribution {
 			candidates = append(candidates, edge.Node)
 		}
 		page := query.Viewer.Repositories.PageInfo
+		slog.Info("Contribution repository page received", "items", len(query.Viewer.Repositories.Edges), "candidates", len(candidates), "has_next_page", page.HasNextPage, "end_cursor", page.EndCursor)
 		if !page.HasNextPage {
 			break
 		}
 		after = graphql.NewString(page.EndCursor)
 	}
 
-	// Merged PRs discover upstream repositories without requiring membership.
+	// Avoid filtering and resolving repository metadata inside the PR connection.
+	// One repository can appear in thousands of PRs; resolve it only once.
+	known := make(map[graphql.String]bool, len(candidates))
+	for _, repo := range candidates {
+		known[repo.NameWithOwner] = true
+	}
+	var upstream []graphql.String
 	after = nil
 	for {
 		var query contributionPullRequestsQuery
-		if err := gitHubClient.Query(context.Background(), &query, map[string]interface{}{"after": after}); err != nil {
+		if err := queryGitHub(context.Background(), "contributedRepositories", &query, map[string]interface{}{"after": after}); err != nil {
 			panic(fmt.Errorf("querying contribution pull request repositories: %w", err))
 		}
 		for _, pr := range query.Viewer.PullRequests.Nodes {
-			candidates = append(candidates, pr.Repository)
+			name := pr.Repository.NameWithOwner
+			if pr.State != "MERGED" || name == "" || known[name] {
+				continue
+			}
+			known[name] = true
+			upstream = append(upstream, name)
 		}
 		page := query.Viewer.PullRequests.PageInfo
+		slog.Info("Contribution PR page received", "items", len(query.Viewer.PullRequests.Nodes), "unique_upstream_repositories", len(upstream), "has_next_page", page.HasNextPage, "end_cursor", page.EndCursor)
 		if !page.HasNextPage {
 			break
 		}
 		after = graphql.NewString(page.EndCursor)
+	}
+	for _, nameWithOwner := range upstream {
+		owner, name, _ := strings.Cut(string(nameWithOwner), "/")
+		var query contributionRepositoryQuery
+		variables := map[string]interface{}{
+			"owner": graphql.String(owner),
+			"name":  graphql.String(name),
+		}
+		if err := queryGitHub(context.Background(), "contributedRepositories", &query, variables); err != nil {
+			panic(fmt.Errorf("querying contribution repository %s: %w", nameWithOwner, err))
+		}
+		candidates = append(candidates, query.Repository)
 	}
 
 	var contributions []Contribution
 	seen := make(map[graphql.String]bool)
 	for _, repo := range candidates {
 		if bool(repo.IsPrivate) || bool(repo.IsFork) || string(repo.NameWithOwner) == login+"/"+login || seen[repo.NameWithOwner] {
+			slog.Info("Contribution repository skipped", "repository", repo.NameWithOwner, "private", repo.IsPrivate, "fork", repo.IsFork, "profile", string(repo.NameWithOwner) == login+"/"+login, "duplicate", seen[repo.NameWithOwner])
 			continue
 		}
 		seen[repo.NameWithOwner] = true
 
 		occurredAt, ok := recentContributionOccurredAt(string(repo.NameWithOwner), author)
 		if !ok {
+			slog.Info("Contribution repository skipped", "repository", repo.NameWithOwner, "reason", "no authored default-branch commits")
 			continue
 		}
 
@@ -141,16 +180,20 @@ func contributedRepositories() []Contribution {
 			Repo:       repoFromQL(repo.qlRepository),
 			OccurredAt: occurredAt,
 		})
+		slog.Info("Contribution repository accepted", "repository", repo.NameWithOwner, "authored_at", occurredAt)
 	}
 
 	sort.Slice(contributions, func(i, j int) bool {
 		return contributions[i].OccurredAt.After(contributions[j].OccurredAt)
 	})
 
+	slog.Info("Results selected", "kind", "contribution candidates", "items", len(contributions))
+
 	return contributions
 }
 
 func recentContributionOccurredAt(nameWithOwner string, author gitHubCommitAuthor) (time.Time, bool) {
+	defer logOperation("recentContributionOccurredAt", "repository", nameWithOwner)()
 	owner, name, ok := strings.Cut(nameWithOwner, "/")
 	if !ok {
 		return time.Time{}, false
@@ -162,7 +205,7 @@ func recentContributionOccurredAt(nameWithOwner string, author gitHubCommitAutho
 		"name":   graphql.String(name),
 		"author": author,
 	}
-	err := gitHubClient.Query(context.Background(), &query, variables)
+	err := queryGitHub(context.Background(), "recentContributionOccurredAt", &query, variables)
 	if err != nil {
 		panic(fmt.Errorf("querying recent contribution commits for %s: %w", nameWithOwner, err))
 	}

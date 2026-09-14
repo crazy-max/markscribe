@@ -17,7 +17,9 @@ func TestContributionDiscoveryPaginatesBeforeRanking(t *testing.T) {
 		t.Run(fmt.Sprintf("releases=%t", releases), func(t *testing.T) {
 			var repoPages, prPages int
 			var retriedPage bool
+			var retriedPRPage bool
 			histories := map[string]int{}
+			metadataQueries := map[string]int{}
 			releaseQueries := map[string]int{}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				var req struct {
@@ -50,7 +52,12 @@ func TestContributionDiscoveryPaginatesBeforeRanking(t *testing.T) {
 						fmt.Fprint(w, `{"data":{"viewer":{"id":"USERID","login":"octocat","repositories":{"pageInfo":{"hasNextPage":false},"edges":[{"node":{"nameWithOwner":"example/new"}}]}}}}`)
 					}
 				case strings.Contains(query, "pullRequests("):
-					if !strings.Contains(query, "pullRequests(first:20,after:$after,states:MERGED,") {
+					if req.Variables["after"] == "prs-next" && !retriedPRPage {
+						retriedPRPage = true
+						http.Error(w, "bad gateway", http.StatusBadGateway)
+						return
+					}
+					if !strings.Contains(query, "pullRequests(first:20,after:$after)") || strings.Contains(query, "stargazers") || strings.Contains(query, "description") || strings.Contains(query, "orderBy") {
 						t.Errorf("unexpected PR query: %s", query)
 					}
 					prPages++
@@ -58,12 +65,12 @@ func TestContributionDiscoveryPaginatesBeforeRanking(t *testing.T) {
 						if req.Variables["after"] != nil {
 							t.Error("first PR cursor must be null")
 						}
-						fmt.Fprint(w, `{"data":{"viewer":{"pullRequests":{"pageInfo":{"hasNextPage":true,"endCursor":"prs-next"},"nodes":[{"repository":{"nameWithOwner":"example/new"}}]}}}}`)
+						fmt.Fprint(w, `{"data":{"viewer":{"pullRequests":{"pageInfo":{"hasNextPage":true,"endCursor":"prs-next"},"nodes":[{"state":"MERGED","repository":{"nameWithOwner":"example/new"}},{"state":"OPEN","repository":{"nameWithOwner":"upstream/project"}},{"state":"CLOSED","repository":{"nameWithOwner":"example/unmerged"}}]}}}}`)
 					} else {
 						if prPages != 2 || req.Variables["after"] != "prs-next" {
 							t.Error("unexpected PR pagination")
 						}
-						fmt.Fprint(w, `{"data":{"viewer":{"pullRequests":{"pageInfo":{"hasNextPage":false},"nodes":[{"repository":{"nameWithOwner":"upstream/project"}},{"repository":{"nameWithOwner":"upstream/project"}},{"repository":{"nameWithOwner":"example/private","isPrivate":true}},{"repository":{"nameWithOwner":"example/fork","isFork":true}},{"repository":{"nameWithOwner":"octocat/octocat"}}]}}}}`)
+						fmt.Fprint(w, `{"data":{"viewer":{"pullRequests":{"pageInfo":{"hasNextPage":false},"nodes":[{"state":"MERGED","repository":{"nameWithOwner":"upstream/project"}},{"state":"MERGED","repository":{"nameWithOwner":"upstream/project"}},{"state":"MERGED","repository":{"nameWithOwner":"example/private"}},{"state":"MERGED","repository":{"nameWithOwner":"example/fork"}},{"state":"MERGED","repository":{"nameWithOwner":"octocat/octocat"}}]}}}}`)
 					}
 				case strings.Contains(query, "history("):
 					name := req.Variables["name"].(string)
@@ -81,6 +88,10 @@ func TestContributionDiscoveryPaginatesBeforeRanking(t *testing.T) {
 					releaseQueries[name]++
 					date := map[string]string{"old": "2026-09-12T00:00:00Z", "new": "2026-09-10T00:00:00Z", "project": "2026-09-11T00:00:00Z"}[name]
 					fmt.Fprintf(w, `{"data":{"repository":{"releases":{"nodes":[{"tagName":"v1","publishedAt":%q}]}}}}`, date)
+				case strings.Contains(query, "repository(owner:$owner,name:$name)"):
+					name := req.Variables["name"].(string)
+					metadataQueries[name]++
+					fmt.Fprintf(w, `{"data":{"repository":{"nameWithOwner":%q,"isPrivate":%t,"isFork":%t}}}`, req.Variables["owner"].(string)+"/"+name, name == "private", name == "fork")
 				default:
 					t.Errorf("unexpected query: %s", query)
 					http.Error(w, "unexpected query", 400)
@@ -109,11 +120,14 @@ func TestContributionDiscoveryPaginatesBeforeRanking(t *testing.T) {
 			if !reflect.DeepEqual(names, want) {
 				t.Errorf("got %v, want %v", names, want)
 			}
-			if repoPages != 2 || prPages != 2 || !retriedPage {
+			if repoPages != 2 || prPages != 2 || !retriedPage || !retriedPRPage {
 				t.Errorf("pages: repositories=%d PRs=%d", repoPages, prPages)
 			}
 			if !reflect.DeepEqual(histories, map[string]int{"old": 1, "new": 1, "project": 1, "no-commits": 1}) {
 				t.Errorf("history queries: %v", histories)
+			}
+			if !reflect.DeepEqual(metadataQueries, map[string]int{"project": 1, "private": 1, "fork": 1, "octocat": 1}) {
+				t.Errorf("metadata queries: %v", metadataQueries)
 			}
 		})
 	}
