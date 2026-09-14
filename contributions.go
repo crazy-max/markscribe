@@ -47,10 +47,17 @@ type contributionPullRequestsQuery struct {
 		PullRequests struct {
 			PageInfo contributionPageInfo
 			Nodes    []struct {
-				Repository contributionRepository
+				State      graphql.String
+				Repository struct {
+					NameWithOwner graphql.String
+				}
 			}
-		} `graphql:"pullRequests(first: 20, after: $after, states: MERGED, orderBy: {field: CREATED_AT, direction: DESC})"`
+		} `graphql:"pullRequests(first: 20, after: $after)"`
 	}
+}
+
+type contributionRepositoryQuery struct {
+	Repository contributionRepository `graphql:"repository(owner: $owner, name: $name)"`
 }
 
 type recentContributionCommitFragment struct {
@@ -107,7 +114,13 @@ func contributedRepositories() []Contribution {
 		after = graphql.NewString(page.EndCursor)
 	}
 
-	// Merged PRs discover upstream repositories without requiring membership.
+	// Avoid filtering and resolving repository metadata inside the PR connection.
+	// One repository can appear in thousands of PRs; resolve it only once.
+	known := make(map[graphql.String]bool, len(candidates))
+	for _, repo := range candidates {
+		known[repo.NameWithOwner] = true
+	}
+	var upstream []graphql.String
 	after = nil
 	for {
 		var query contributionPullRequestsQuery
@@ -115,13 +128,30 @@ func contributedRepositories() []Contribution {
 			panic(fmt.Errorf("querying contribution pull request repositories: %w", err))
 		}
 		for _, pr := range query.Viewer.PullRequests.Nodes {
-			candidates = append(candidates, pr.Repository)
+			name := pr.Repository.NameWithOwner
+			if pr.State != "MERGED" || name == "" || known[name] {
+				continue
+			}
+			known[name] = true
+			upstream = append(upstream, name)
 		}
 		page := query.Viewer.PullRequests.PageInfo
 		if !page.HasNextPage {
 			break
 		}
 		after = graphql.NewString(page.EndCursor)
+	}
+	for _, nameWithOwner := range upstream {
+		owner, name, _ := strings.Cut(string(nameWithOwner), "/")
+		var query contributionRepositoryQuery
+		variables := map[string]interface{}{
+			"owner": graphql.String(owner),
+			"name":  graphql.String(name),
+		}
+		if err := gitHubClient.Query(context.Background(), &query, variables); err != nil {
+			panic(fmt.Errorf("querying contribution repository %s: %w", nameWithOwner, err))
+		}
+		candidates = append(candidates, query.Repository)
 	}
 
 	var contributions []Contribution
