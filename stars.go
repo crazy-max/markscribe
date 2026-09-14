@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	graphql "github.com/hasura/go-graphql-client"
@@ -22,6 +23,7 @@ var recentStarsQuery struct {
 }
 
 func recentStars(count int) []Star {
+	defer logOperation("recentStars", "count", count)()
 	var starredRepos []Star
 	var after *graphql.String
 
@@ -32,7 +34,7 @@ outer:
 			"count":    graphql.Int(count),
 			"after":    after,
 		}
-		err := gitHubClient.Query(context.Background(), &recentStarsQuery, variables)
+		err := queryGitHub(context.Background(), "recentStars", &recentStarsQuery, variables)
 		if err != nil {
 			panic(err)
 		}
@@ -51,6 +53,8 @@ outer:
 			after = graphql.NewString(v.Cursor)
 		}
 	}
+
+	slog.Info("Results selected", "kind", "starred repositories", "items", len(starredRepos))
 
 	return starredRepos
 }

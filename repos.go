@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 
@@ -55,14 +56,14 @@ var repoQuery struct {
 }
 
 func recentPullRequests(count int) []PullRequest {
-	// fmt.Printf("Finding recently created pullRequests...\n")
+	defer logOperation("recentPullRequests", "count", count)()
 
 	var pullRequests []PullRequest
 	variables := map[string]interface{}{
 		"username": graphql.String(username),
 		"count":    graphql.Int(count + 1), // +1 in case we encounter the meta-repo itself
 	}
-	err := gitHubClient.Query(context.Background(), &recentPullRequestsQuery, variables)
+	err := queryGitHub(context.Background(), "recentPullRequests", &recentPullRequestsQuery, variables)
 	if err != nil {
 		panic(err)
 	}
@@ -81,13 +82,12 @@ func recentPullRequests(count int) []PullRequest {
 			break
 		}
 	}
-
-	// fmt.Printf("Found %d pullRequests!\n", len(pullRequests))
+	slog.Info("Results selected", "kind", "pull requests", "items", len(pullRequests))
 	return pullRequests
 }
 
 func recentRepos(count int) []Repo {
-	// fmt.Printf("Finding recently created repos...\n")
+	defer logOperation("recentRepos", "count", count)()
 
 	var repos []Repo
 	variables := map[string]interface{}{
@@ -95,7 +95,7 @@ func recentRepos(count int) []Repo {
 		"count":    graphql.Int(count + 1), // +1 in case we encounter the meta-repo itself
 		"isFork":   graphql.Boolean(false),
 	}
-	err := gitHubClient.Query(context.Background(), &recentReposQuery, variables)
+	err := queryGitHub(context.Background(), "recentRepos", &recentReposQuery, variables)
 	if err != nil {
 		panic(err)
 	}
@@ -111,13 +111,12 @@ func recentRepos(count int) []Repo {
 			break
 		}
 	}
-
-	// fmt.Printf("Found %d repos!\n", len(repos))
+	slog.Info("Results selected", "kind", "repositories", "items", len(repos))
 	return repos
 }
 
 func recentForks(count int) []Repo {
-	// fmt.Printf("Finding recently created repos...\n")
+	defer logOperation("recentForks", "count", count)()
 
 	var repos []Repo
 	variables := map[string]interface{}{
@@ -125,7 +124,7 @@ func recentForks(count int) []Repo {
 		"count":    graphql.Int(count + 1), // +1 in case we encounter the meta-repo itself
 		"isFork":   graphql.Boolean(true),
 	}
-	err := gitHubClient.Query(context.Background(), &recentReposQuery, variables)
+	err := queryGitHub(context.Background(), "recentForks", &recentReposQuery, variables)
 	if err != nil {
 		panic(err)
 	}
@@ -141,13 +140,12 @@ func recentForks(count int) []Repo {
 			break
 		}
 	}
-
-	// fmt.Printf("Found %d repos!\n", len(repos))
+	slog.Info("Results selected", "kind", "repositories", "items", len(repos))
 	return repos
 }
 
 func recentReleases(count int) []Repo {
-	// fmt.Printf("Finding recent releases...\n")
+	defer logOperation("recentReleases", "count", count)()
 
 	if count <= 0 {
 		return nil
@@ -158,10 +156,12 @@ func recentReleases(count int) []Repo {
 		r := contribution.Repo
 		release, ok := recentRelease(r.Name)
 		if !ok {
+			slog.Info("Release repository skipped", "repository", r.Name, "reason", "no eligible release")
 			continue
 		}
 
 		r.LastRelease = release
+		slog.Info("Release selected", "repository", r.Name, "tag", release.TagName, "published_at", release.PublishedAt)
 		repos = append(repos, r)
 	}
 
@@ -171,15 +171,16 @@ func recentReleases(count int) []Repo {
 		}
 		return repos[i].LastRelease.PublishedAt.After(repos[j].LastRelease.PublishedAt)
 	})
-
-	// fmt.Printf("Found %d repos!\n", len(repos))
 	if len(repos) > count {
+		slog.Info("Results selected", "kind", "repositories", "items", len(repos[:count]))
 		return repos[:count]
 	}
+	slog.Info("Results selected", "kind", "repositories", "items", len(repos))
 	return repos
 }
 
 func recentRelease(nameWithOwner string) (Release, bool) {
+	defer logOperation("recentRelease", "repository", nameWithOwner)()
 	owner, name, ok := strings.Cut(nameWithOwner, "/")
 	if !ok {
 		return Release{}, false
@@ -190,16 +191,18 @@ func recentRelease(nameWithOwner string) (Release, bool) {
 		"owner": graphql.String(owner),
 		"name":  graphql.String(name),
 	}
-	err := gitHubClient.Query(context.Background(), &query, variables)
+	err := queryGitHub(context.Background(), "recentRelease", &query, variables)
 	if err != nil {
 		panic(fmt.Errorf("querying recent releases for %s: %w", nameWithOwner, err))
 	}
 
 	for _, rel := range query.Repository.Releases.Nodes {
 		if rel.IsPrerelease || rel.IsDraft {
+			slog.Info("Release skipped", "repository", nameWithOwner, "tag", rel.TagName, "draft", rel.IsDraft, "prerelease", rel.IsPrerelease)
 			continue
 		}
 		if rel.TagName == "" || rel.PublishedAt.IsZero() {
+			slog.Info("Release skipped", "repository", nameWithOwner, "reason", "missing tag or publication date")
 			continue
 		}
 		return Release{
@@ -214,11 +217,12 @@ func recentRelease(nameWithOwner string) (Release, bool) {
 }
 
 func repo(owner, name string) Repo {
+	defer logOperation("repo", "owner", owner, "name", name)()
 	variables := map[string]interface{}{
 		"owner": graphql.String(owner),
 		"name":  graphql.String(name),
 	}
-	err := gitHubClient.Query(context.Background(), &repoQuery, variables)
+	err := queryGitHub(context.Background(), "repo", &repoQuery, variables)
 	if err != nil {
 		panic(err)
 	}

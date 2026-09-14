@@ -18,6 +18,17 @@ Render to a file:
 
     markscribe -write /tmp/output.md template.tpl
 
+Diagnostic logs are written to stderr by default. They include template stages,
+operation timings and result counts, GitHub query shapes and non-secret inputs,
+each HTTP attempt (including retries), status codes, GitHub request IDs, rate-limit
+headers, pagination cursors, and contribution/release filtering decisions.
+Authorization headers, credentials, response bodies, and generated Markdown are
+not logged. Large histories can produce substantial log output.
+
+To save diagnostics separately from the generated Markdown:
+
+    markscribe -write README.md templates/README.md.tpl 2>markscribe.log
+
 ## Installation
 
 To install markscribe, simply run:

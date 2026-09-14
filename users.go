@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"log/slog"
 
 	graphql "github.com/hasura/go-graphql-client"
 )
@@ -26,7 +27,7 @@ var recentFollowersQuery struct {
 }
 
 func getUsername() (string, error) {
-	err := gitHubClient.Query(context.Background(), &viewerQuery, nil)
+	err := queryGitHub(context.Background(), "getUsername", &viewerQuery, nil)
 	if err != nil {
 		return "", err
 	}
@@ -35,24 +36,21 @@ func getUsername() (string, error) {
 }
 
 func recentFollowers(count int) []User {
-	// fmt.Printf("Finding recent followers...\n")
+	defer logOperation("recentFollowers", "count", count)()
 
 	var users []User
 	variables := map[string]interface{}{
 		"username": graphql.String(username),
 		"count":    graphql.Int(count),
 	}
-	err := gitHubClient.Query(context.Background(), &recentFollowersQuery, variables)
+	err := queryGitHub(context.Background(), "recentFollowers", &recentFollowersQuery, variables)
 	if err != nil {
 		panic(err)
 	}
-
-	// fmt.Printf("%+v\n", query)
 	for _, v := range recentFollowersQuery.User.Followers.Edges {
 		users = append(users, userFromQL(v.Node))
 	}
-
-	// fmt.Printf("Found %d recent followers!\n", len(users))
+	slog.Info("Results selected", "kind", "followers", "items", len(users))
 	return users
 }
 

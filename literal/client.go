@@ -2,7 +2,9 @@ package literal
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/caarlos0/env/v6"
 	graphql "github.com/hasura/go-graphql-client"
@@ -18,8 +20,11 @@ type Auth struct {
 const literalURL = "https://literal.club/graphql/"
 
 func login() (*graphql.Client, error) {
+	start := time.Now()
+	slog.Info("Literal authentication started")
 	var auth Auth
 	if err := env.Parse(&auth); err != nil {
+		slog.Error("Literal authentication configuration failed")
 		return nil, err
 	}
 
@@ -29,6 +34,7 @@ func login() (*graphql.Client, error) {
 		"email":    graphql.String(auth.Email),
 		"password": graphql.String(auth.Password),
 	}); err != nil {
+		slog.Error("Literal authentication failed", "duration", time.Since(start))
 		return nil, err
 	}
 
@@ -36,6 +42,7 @@ func login() (*graphql.Client, error) {
 		&oauth2.Token{AccessToken: string(m.Login.Token)},
 	)
 	cli := oauth2.NewClient(context.Background(), src)
+	slog.Info("Literal authentication completed", "duration", time.Since(start))
 	return graphql.NewClient(literalURL, cli), nil
 }
 
@@ -47,9 +54,13 @@ func CurrentlyReading() ([]Book, error) {
 	}
 
 	q := readingQ{}
+	start := time.Now()
+	slog.Info("Literal reading states query started")
 	if err := client.Query(context.Background(), &q, nil); err != nil {
+		slog.Error("Literal reading states query failed", "duration", time.Since(start))
 		return nil, err
 	}
+	slog.Info("Literal reading states query completed", "duration", time.Since(start), "items", len(q.MyReadingStates))
 
 	var books []Book
 	for _, rs := range q.MyReadingStates {
