@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -19,6 +20,10 @@ const (
 	gitHubMaxRetries      = 4
 	gitHubRetryBaseDelay  = time.Second
 )
+
+type gitHubQueryLogKey struct{}
+
+var gitHubQuerySequence atomic.Uint64
 
 func newGitHubClient(token string) *graphql.Client {
 	var httpClient graphql.Doer = http.DefaultClient
@@ -53,6 +58,7 @@ func retryGitHubGraphQLErrors(errs graphql.Errors) bool {
 	if len(errs) == 0 {
 		return false
 	}
+	logGitHubErrors(slog.Default(), errs)
 	for _, err := range errs {
 		// GitHub can return an internal execution failure with HTTP 200 and
 		// no error code. Match its specific message, not arbitrary API errors.
@@ -72,13 +78,17 @@ type loggingGitHubClient struct {
 func (c *loggingGitHubClient) Do(req *http.Request) (*http.Response, error) {
 	id := c.requests.Add(1)
 	start := time.Now()
-	slog.Info("GitHub HTTP request started", "request", id, "method", req.Method)
+	logger, ok := req.Context().Value(gitHubQueryLogKey{}).(*slog.Logger)
+	if !ok {
+		logger = slog.Default()
+	}
+	logger.Info("GitHub HTTP request started", "request", id, "method", req.Method)
 	resp, err := c.client.Do(req)
 	if err != nil {
-		slog.Error("GitHub HTTP request failed", "request", id, "duration", time.Since(start), "error_type", fmt.Sprintf("%T", err))
+		logger.Error("GitHub HTTP request failed", "request", id, "duration", time.Since(start), "error_type", fmt.Sprintf("%T", err))
 		return resp, err
 	}
-	slog.Info("GitHub HTTP response", "request", id, "duration", time.Since(start),
+	logger.Info("GitHub HTTP response", "request", id, "duration", time.Since(start),
 		"status", resp.StatusCode, "github_request_id", resp.Header.Get("X-GitHub-Request-Id"),
 		"rate_limit", resp.Header.Get("X-RateLimit-Limit"), "rate_remaining", resp.Header.Get("X-RateLimit-Remaining"),
 		"rate_reset", resp.Header.Get("X-RateLimit-Reset"), "retry_after", resp.Header.Get("Retry-After"))
@@ -87,6 +97,8 @@ func (c *loggingGitHubClient) Do(req *http.Request) (*http.Response, error) {
 
 func queryGitHub(ctx context.Context, operation string, query interface{}, variables map[string]interface{}) error {
 	start := time.Now()
+	logger := slog.Default().With("operation", operation, "query_id", gitHubQuerySequence.Add(1))
+	ctx = context.WithValue(ctx, gitHubQueryLogKey{}, logger)
 	// Only log known, non-secret query inputs. Never log HTTP headers or bodies.
 	inputs := make(map[string]interface{})
 	for _, key := range []string{"username", "owner", "name", "count", "after", "isFork", "author"} {
@@ -99,12 +111,32 @@ func queryGitHub(ctx context.Context, operation string, query interface{}, varia
 	if err != nil {
 		return err
 	}
-	slog.Info("GitHub query started", "operation", operation, "variables", string(encoded), "query", shape)
+	logger.Info("GitHub query started", "variables", string(encoded), "query", shape)
 	err = gitHubClient.Query(ctx, query, variables)
 	if err != nil {
-		slog.Error("GitHub query failed", "operation", operation, "duration", time.Since(start), "error_type", fmt.Sprintf("%T", err))
+		var graphqlErrors graphql.Errors
+		if errors.As(err, &graphqlErrors) {
+			logGitHubErrors(logger, graphqlErrors)
+		}
+		logger.Error("GitHub query failed", "duration", time.Since(start), "error_type", fmt.Sprintf("%T", err))
 	} else {
-		slog.Info("GitHub query completed", "operation", operation, "duration", time.Since(start))
+		logger.Info("GitHub query completed", "duration", time.Since(start))
 	}
 	return err
+}
+
+func logGitHubErrors(logger *slog.Logger, errs graphql.Errors) {
+	for i, err := range errs {
+		// Client-generated errors can contain raw HTTP bodies. Only expand
+		// server GraphQL errors, not transport or response-decoding failures.
+		if err.Unwrap() != nil {
+			continue
+		}
+		extensions, _ := json.Marshal(err.Extensions)
+		path, _ := json.Marshal(err.Path)
+		locations, _ := json.Marshal(err.Locations)
+		logger.Error("GitHub GraphQL error", "error_index", i,
+			"message", err.Message, "extensions", string(extensions),
+			"path", string(path), "locations", string(locations))
+	}
 }

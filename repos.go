@@ -44,14 +44,12 @@ type recentReleaseQuery struct {
 
 var repoQuery struct {
 	Repository struct {
-		Description   graphql.String
-		NameWithOwner graphql.String
-		IsPrivate     graphql.Boolean
-		URL           graphql.String
-		Stargazers    struct {
-			TotalCount graphql.Int
-		}
-		Releases qlRelease `graphql:"releases(last: 1)"`
+		Description    graphql.String
+		NameWithOwner  graphql.String
+		IsPrivate      graphql.Boolean
+		URL            graphql.String
+		StargazerCount graphql.Int
+		Releases       qlRelease `graphql:"releases(last: 1)"`
 	} `graphql:"repository(owner:$owner, name:$name)"`
 }
 
@@ -231,7 +229,7 @@ func repo(owner, name string) Repo {
 		Name:        string(repo.NameWithOwner),
 		URL:         string(repo.URL),
 		Description: string(repo.Description),
-		Stargazers:  int(repo.Stargazers.TotalCount),
+		Stargazers:  int(repo.StargazerCount),
 		IsPrivate:   bool(repo.IsPrivate),
 		LastRelease: releaseFromQL(repo.Releases),
 	}

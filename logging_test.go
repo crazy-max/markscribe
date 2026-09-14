@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -96,6 +97,38 @@ func TestOperationLoggingPreservesPanic(t *testing.T) {
 	logs := output.String()
 	if !strings.Contains(logs, "Operation failed") || strings.Contains(logs, "Operation completed") || strings.Contains(logs, failure.Error()) {
 		t.Fatalf("unexpected failure logs: %s", logs)
+	}
+}
+
+func TestGitHubLoggingIncludesGraphQLErrorDetailsAndQueryID(t *testing.T) {
+	output := captureLogs(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-GitHub-Request-Id", "github-error-request")
+		fmt.Fprint(w, `{"data":null,"errors":[{"message":"Cannot resolve repository field","extensions":{"code":"FORBIDDEN"},"path":["repository","stargazerCount"],"locations":[{"line":1,"column":42}]}]}`)
+	}))
+	defer server.Close()
+	previous := gitHubClient
+	gitHubClient = newGitHubGraphQLClient(server.URL, server.Client(), 0)
+	t.Cleanup(func() { gitHubClient = previous })
+	var query struct{ Viewer struct{ Login string } }
+	if err := queryGitHub(context.Background(), "error-details", &query, nil); err == nil {
+		t.Fatal("expected query error")
+	}
+	logs := output.String()
+	for _, want := range []string{"Cannot resolve repository field", "FORBIDDEN", "stargazerCount", "locations=", "column", "42", "github-error-request", "operation=error-details"} {
+		if !strings.Contains(logs, want) {
+			t.Errorf("missing %q in logs: %s", want, logs)
+		}
+	}
+	ids := regexp.MustCompile(`query_id=(\d+)`).FindAllStringSubmatch(logs, -1)
+	if len(ids) < 5 {
+		t.Fatalf("missing query correlation: %s", logs)
+	}
+	for _, id := range ids {
+		if id[1] != ids[0][1] {
+			t.Errorf("inconsistent query IDs: %v", ids)
+		}
 	}
 }
 

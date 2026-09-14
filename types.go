@@ -94,13 +94,11 @@ type qlRelease struct {
 }
 
 type qlRepository struct {
-	NameWithOwner graphql.String
-	URL           graphql.String
-	Description   graphql.String
-	IsPrivate     graphql.Boolean
-	Stargazers    struct {
-		TotalCount graphql.Int
-	}
+	NameWithOwner  graphql.String
+	URL            graphql.String
+	Description    graphql.String
+	IsPrivate      graphql.Boolean
+	StargazerCount graphql.Int
 }
 
 type qlUser struct {
@@ -143,7 +141,7 @@ func repoFromQL(repo qlRepository) Repo {
 		Name:        string(repo.NameWithOwner),
 		URL:         string(repo.URL),
 		Description: string(repo.Description),
-		Stargazers:  int(repo.Stargazers.TotalCount),
+		Stargazers:  int(repo.StargazerCount),
 		IsPrivate:   bool(repo.IsPrivate),
 	}
 }

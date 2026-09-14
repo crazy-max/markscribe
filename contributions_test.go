@@ -177,7 +177,7 @@ func TestRecentContributionsQueriesRecentRepositoriesAndCommitHistory(t *testing
 										"url": "https://github.com/octocat/octocat",
 										"description": "Profile",
 										"isPrivate": false,
-										"stargazers": {"totalCount": 0}
+										"stargazerCount": 0
 									}
 								},
 								{
@@ -187,7 +187,7 @@ func TestRecentContributionsQueriesRecentRepositoriesAndCommitHistory(t *testing
 										"url": "https://github.com/example/private",
 										"description": "Private repo",
 										"isPrivate": true,
-										"stargazers": {"totalCount": 0}
+										"stargazerCount": 0
 									}
 								},
 								{
@@ -197,7 +197,7 @@ func TestRecentContributionsQueriesRecentRepositoriesAndCommitHistory(t *testing
 										"url": "https://github.com/example/older",
 										"description": "Older repo",
 										"isPrivate": false,
-										"stargazers": {"totalCount": 1}
+										"stargazerCount": 1
 									}
 								},
 								{
@@ -207,7 +207,7 @@ func TestRecentContributionsQueriesRecentRepositoriesAndCommitHistory(t *testing
 										"url": "https://github.com/example/newer",
 										"description": "Newer repo",
 										"isPrivate": false,
-										"stargazers": {"totalCount": 2}
+										"stargazerCount": 2
 									}
 								}
 							]
@@ -382,7 +382,7 @@ func TestRecentContributionsWrapsCommitHistoryQueryErrors(t *testing.T) {
 									"url": "https://github.com/example/repo",
 									"description": "Example repo",
 									"isPrivate": false,
-									"stargazers": {"totalCount": 1}
+									"stargazerCount": 1
 								}
 							}
 						]
