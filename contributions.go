@@ -4,12 +4,20 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
 	graphql "github.com/hasura/go-graphql-client"
 )
+
+// The CLI renders one template per client. Share a completed discovery between
+// template functions; never reuse partial results after a failed query.
+var contributionCache struct {
+	client        *graphql.Client
+	contributions []Contribution
+}
 
 type contributionPageInfo struct {
 	HasNextPage graphql.Boolean
@@ -39,7 +47,7 @@ type recentContributionRepositoriesQuery struct {
 				Cursor graphql.String
 				Node   contributionRepository
 			}
-		} `graphql:"repositories(first: 20, after: $after, affiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER], privacy: PUBLIC, isFork: false, orderBy: {field: PUSHED_AT, direction: DESC})"`
+		} `graphql:"repositories(first: 100, after: $after, affiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER], privacy: PUBLIC, isFork: false, orderBy: {field: PUSHED_AT, direction: DESC})"`
 	}
 }
 
@@ -53,7 +61,7 @@ type contributionPullRequestsQuery struct {
 					NameWithOwner graphql.String
 				}
 			}
-		} `graphql:"pullRequests(first: 20, after: $after)"`
+		} `graphql:"pullRequests(first: 100, after: $after)"`
 	}
 }
 
@@ -98,6 +106,10 @@ func recentContributions(count int) []Contribution {
 // history lookups separate, and rank only after every candidate page is read.
 func contributedRepositories() []Contribution {
 	defer logOperation("contributedRepositories")()
+	if contributionCache.client != nil && contributionCache.client == gitHubClient {
+		slog.Info("Reusing contribution discovery", "repositories", len(contributionCache.contributions))
+		return slices.Clone(contributionCache.contributions)
+	}
 	var candidates []contributionRepository
 	var author gitHubCommitAuthor
 	var login string
@@ -188,7 +200,8 @@ func contributedRepositories() []Contribution {
 	})
 
 	slog.Info("Results selected", "kind", "contribution candidates", "items", len(contributions))
-
+	contributionCache.client = gitHubClient
+	contributionCache.contributions = slices.Clone(contributions)
 	return contributions
 }
 

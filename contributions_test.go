@@ -57,7 +57,7 @@ func TestContributionDiscoveryPaginatesBeforeRanking(t *testing.T) {
 						http.Error(w, "bad gateway", http.StatusBadGateway)
 						return
 					}
-					if !strings.Contains(query, "pullRequests(first:20,after:$after)") || strings.Contains(query, "stargazers") || strings.Contains(query, "description") || strings.Contains(query, "orderBy") {
+					if !strings.Contains(query, "pullRequests(first:100,after:$after)") || strings.Contains(query, "stargazers") || strings.Contains(query, "description") || strings.Contains(query, "orderBy") {
 						t.Errorf("unexpected PR query: %s", query)
 					}
 					prPages++
@@ -101,6 +101,13 @@ func TestContributionDiscoveryPaginatesBeforeRanking(t *testing.T) {
 			oldClient := gitHubClient
 			gitHubClient = newGitHubGraphQLClient(server.URL, server.Client(), 0)
 			t.Cleanup(func() { gitHubClient = oldClient })
+			// A prior template call must cache the full discovery, not just its
+			// requested prefix, and callers must not mutate the cached slice.
+			preview := recentContributions(1)
+			if len(preview) != 1 {
+				t.Fatalf("expected one preview contribution, got %d", len(preview))
+			}
+			preview[0].Repo.Name = "modified-by-caller"
 			var names []string
 			want := []string{"upstream/project", "example/new"}
 			if releases {
@@ -158,7 +165,7 @@ func TestRecentContributionsQueriesRecentRepositoriesAndCommitHistory(t *testing
 			if strings.Contains(query, "commitContributionsByRepository") {
 				t.Fatalf("expected query to avoid commitContributionsByRepository, got %s", req.Query)
 			}
-			if !strings.Contains(query, "repositories(first:20,after:$after,affiliations:[OWNER,COLLABORATOR,ORGANIZATION_MEMBER],privacy:PUBLIC,isFork:false,orderBy:{field:PUSHED_AT,direction:DESC})") {
+			if !strings.Contains(query, "repositories(first:100,after:$after,affiliations:[OWNER,COLLABORATOR,ORGANIZATION_MEMBER],privacy:PUBLIC,isFork:false,orderBy:{field:PUSHED_AT,direction:DESC})") {
 				t.Fatalf("expected viewer repositories query, got %s", req.Query)
 			}
 
