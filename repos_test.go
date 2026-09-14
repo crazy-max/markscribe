@@ -83,7 +83,7 @@ func TestRecentReleasesQueriesViewerRepositories(t *testing.T) {
 			if strings.Contains(query, "releases(") {
 				t.Fatalf("expected repository candidate query to avoid nested releases, got %s", req.Query)
 			}
-			if !strings.Contains(query, "repositories(first:20,after:$after,affiliations:[OWNER,COLLABORATOR,ORGANIZATION_MEMBER],privacy:PUBLIC,isFork:false,orderBy:{field:PUSHED_AT,direction:DESC})") {
+			if !strings.Contains(query, "repositories(first:100,after:$after,affiliations:[OWNER,COLLABORATOR,ORGANIZATION_MEMBER],privacy:PUBLIC,isFork:false,orderBy:{field:PUSHED_AT,direction:DESC})") {
 				t.Fatalf("expected viewer repositories query, got %s", req.Query)
 			}
 

@@ -162,6 +162,11 @@ excluded. Discovery reads all candidate pages using small, separate GraphQL
 requests to avoid expensive contribution aggregates; large accounts take more
 requests to render.
 
+Repository and pull-request lists use pages of 100 entries. Completed contribution
+discovery is reused by both functions during a render, so requesting recent
+releases does not repeat the repository scan or commit-history lookups. Failed
+discovery is not cached.
+
 ```
 {{range recentReleases 10}}
 Name: {{.Name}}
