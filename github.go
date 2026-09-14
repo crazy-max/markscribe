@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -37,6 +38,7 @@ func newGitHubGraphQLClient(endpoint string, httpClient graphql.Doer, retryBaseD
 	return graphql.NewClient(endpoint, &loggingGitHubClient{client: httpClient},
 		graphql.WithRetry(gitHubMaxRetries),
 		graphql.WithRetryBaseDelay(retryBaseDelay),
+		graphql.WithRetryOnGraphQLError(retryGitHubGraphQLErrors),
 		graphql.WithRetryHTTPStatus([]int{
 			http.StatusInternalServerError,
 			http.StatusTooManyRequests,
@@ -45,6 +47,21 @@ func newGitHubGraphQLClient(endpoint string, httpClient graphql.Doer, retryBaseD
 			http.StatusGatewayTimeout,
 		}),
 	)
+}
+
+func retryGitHubGraphQLErrors(errs graphql.Errors) bool {
+	if len(errs) == 0 {
+		return false
+	}
+	for _, err := range errs {
+		// GitHub can return an internal execution failure with HTTP 200 and
+		// no error code. Match its specific message, not arbitrary API errors.
+		if !strings.HasPrefix(err.Message, "Something went wrong while executing your query") {
+			return false
+		}
+	}
+	slog.Warn("Retrying GitHub GraphQL execution failure", "errors", len(errs))
+	return true
 }
 
 type loggingGitHubClient struct {
