@@ -5,11 +5,119 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
 	graphql "github.com/hasura/go-graphql-client"
 )
+
+func TestContributionDiscoveryPaginatesBeforeRanking(t *testing.T) {
+	for _, releases := range []bool{false, true} {
+		t.Run(fmt.Sprintf("releases=%t", releases), func(t *testing.T) {
+			var repoPages, prPages int
+			var retriedPage bool
+			histories := map[string]int{}
+			releaseQueries := map[string]int{}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var req struct {
+					Query     string
+					Variables map[string]interface{}
+				}
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					t.Error(err)
+					return
+				}
+				query := strings.ReplaceAll(req.Query, " ", "")
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case strings.Contains(query, "repositories("):
+					if req.Variables["after"] == "repos-next" && !retriedPage {
+						retriedPage = true
+						http.Error(w, "bad gateway", http.StatusBadGateway)
+						return
+					}
+					repoPages++
+					if repoPages == 1 {
+						if req.Variables["after"] != nil {
+							t.Error("first repository cursor must be null")
+						}
+						fmt.Fprint(w, `{"data":{"viewer":{"id":"USERID","login":"octocat","repositories":{"pageInfo":{"hasNextPage":true,"endCursor":"repos-next"},"edges":[{"node":{"nameWithOwner":"example/old"}},{"node":{"nameWithOwner":"example/no-commits"}}]}}}}`)
+					} else {
+						if repoPages != 2 || req.Variables["after"] != "repos-next" {
+							t.Error("unexpected repository pagination")
+						}
+						fmt.Fprint(w, `{"data":{"viewer":{"id":"USERID","login":"octocat","repositories":{"pageInfo":{"hasNextPage":false},"edges":[{"node":{"nameWithOwner":"example/new"}}]}}}}`)
+					}
+				case strings.Contains(query, "pullRequests("):
+					if !strings.Contains(query, "pullRequests(first:20,after:$after,states:MERGED,") {
+						t.Errorf("unexpected PR query: %s", query)
+					}
+					prPages++
+					if prPages == 1 {
+						if req.Variables["after"] != nil {
+							t.Error("first PR cursor must be null")
+						}
+						fmt.Fprint(w, `{"data":{"viewer":{"pullRequests":{"pageInfo":{"hasNextPage":true,"endCursor":"prs-next"},"nodes":[{"repository":{"nameWithOwner":"example/new"}}]}}}}`)
+					} else {
+						if prPages != 2 || req.Variables["after"] != "prs-next" {
+							t.Error("unexpected PR pagination")
+						}
+						fmt.Fprint(w, `{"data":{"viewer":{"pullRequests":{"pageInfo":{"hasNextPage":false},"nodes":[{"repository":{"nameWithOwner":"upstream/project"}},{"repository":{"nameWithOwner":"upstream/project"}},{"repository":{"nameWithOwner":"example/private","isPrivate":true}},{"repository":{"nameWithOwner":"example/fork","isFork":true}},{"repository":{"nameWithOwner":"octocat/octocat"}}]}}}}`)
+					}
+				case strings.Contains(query, "history("):
+					name := req.Variables["name"].(string)
+					histories[name]++
+					if !reflect.DeepEqual(req.Variables["author"], map[string]interface{}{"id": "USERID"}) {
+						t.Errorf("unexpected author: %v", req.Variables["author"])
+					}
+					nodes := `[]`
+					if date := map[string]string{"old": "2026-07-01T00:00:00Z", "new": "2026-09-10T00:00:00Z", "project": "2026-09-11T00:00:00Z"}[name]; date != "" {
+						nodes = fmt.Sprintf(`[{"authoredDate":%q}]`, date)
+					}
+					fmt.Fprintf(w, `{"data":{"repository":{"defaultBranchRef":{"target":{"history":{"nodes":%s}}}}}}`, nodes)
+				case strings.Contains(query, "releases("):
+					name := req.Variables["name"].(string)
+					releaseQueries[name]++
+					date := map[string]string{"old": "2026-09-12T00:00:00Z", "new": "2026-09-10T00:00:00Z", "project": "2026-09-11T00:00:00Z"}[name]
+					fmt.Fprintf(w, `{"data":{"repository":{"releases":{"nodes":[{"tagName":"v1","publishedAt":%q}]}}}}`, date)
+				default:
+					t.Errorf("unexpected query: %s", query)
+					http.Error(w, "unexpected query", 400)
+				}
+			}))
+			defer server.Close()
+			oldClient := gitHubClient
+			gitHubClient = newGitHubGraphQLClient(server.URL, server.Client(), 0)
+			t.Cleanup(func() { gitHubClient = oldClient })
+			var names []string
+			want := []string{"upstream/project", "example/new"}
+			if releases {
+				for _, repo := range recentReleases(2) {
+					names = append(names, repo.Name)
+				}
+				// Release recency is independent of contribution recency.
+				want = []string{"example/old", "upstream/project"}
+				if !reflect.DeepEqual(releaseQueries, map[string]int{"old": 1, "new": 1, "project": 1}) {
+					t.Errorf("release queries: %v", releaseQueries)
+				}
+			} else {
+				for _, contribution := range recentContributions(2) {
+					names = append(names, contribution.Repo.Name)
+				}
+			}
+			if !reflect.DeepEqual(names, want) {
+				t.Errorf("got %v, want %v", names, want)
+			}
+			if repoPages != 2 || prPages != 2 || !retriedPage {
+				t.Errorf("pages: repositories=%d PRs=%d", repoPages, prPages)
+			}
+			if !reflect.DeepEqual(histories, map[string]int{"old": 1, "new": 1, "project": 1, "no-commits": 1}) {
+				t.Errorf("history queries: %v", histories)
+			}
+		})
+	}
+}
 
 func TestRecentContributionsQueriesRecentRepositoriesAndCommitHistory(t *testing.T) {
 	var repositoryQueries int
@@ -26,6 +134,8 @@ func TestRecentContributionsQueriesRecentRepositoriesAndCommitHistory(t *testing
 
 		query := strings.ReplaceAll(req.Query, " ", "")
 		switch {
+		case strings.Contains(query, "pullRequests("):
+			fmt.Fprint(w, `{"data":{"viewer":{"pullRequests":{"nodes":[]}}}}`)
 		case strings.Contains(query, "repositories("):
 			repositoryQueries++
 			if strings.Contains(query, "repositoriesContributedTo") {
@@ -34,11 +144,8 @@ func TestRecentContributionsQueriesRecentRepositoriesAndCommitHistory(t *testing
 			if strings.Contains(query, "commitContributionsByRepository") {
 				t.Fatalf("expected query to avoid commitContributionsByRepository, got %s", req.Query)
 			}
-			if !strings.Contains(query, "repositories(first:$maxRepositories,affiliations:[OWNER,COLLABORATOR,ORGANIZATION_MEMBER],privacy:PUBLIC,isFork:false,orderBy:{field:PUSHED_AT,direction:DESC})") {
+			if !strings.Contains(query, "repositories(first:20,after:$after,affiliations:[OWNER,COLLABORATOR,ORGANIZATION_MEMBER],privacy:PUBLIC,isFork:false,orderBy:{field:PUSHED_AT,direction:DESC})") {
 				t.Fatalf("expected viewer repositories query, got %s", req.Query)
-			}
-			if got := req.Variables["maxRepositories"]; got != float64(7) {
-				t.Fatalf("unexpected maxRepositories variable: %#v", got)
 			}
 
 			w.Header().Set("Content-Type", "application/json")
@@ -162,25 +269,9 @@ func TestRecentContributionsQueriesRecentRepositoriesAndCommitHistory(t *testing
 	}
 }
 
-func TestRecentContributionRepositoryLimit(t *testing.T) {
-	tests := map[int]int{
-		0:  0,
-		1:  6,
-		5:  10,
-		10: 15,
-		30: gitHubMaxContributionRepositories,
-	}
-
-	for count, want := range tests {
-		if got := recentContributionRepositoryLimit(count); got != want {
-			t.Fatalf("count %d: expected %d, got %d", count, want, got)
-		}
-	}
-}
-
 func TestRecentContributionQueriesUseTimeScalars(t *testing.T) {
 	repositoriesQuery, err := graphql.ConstructQuery(&recentContributionRepositoriesQuery{}, map[string]interface{}{
-		"maxRepositories": graphql.Int(10),
+		"after": (*graphql.String)(nil),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -250,6 +341,12 @@ func TestRecentContributionsWrapsRepositoryQueryErrors(t *testing.T) {
 func TestRecentContributionsWrapsCommitHistoryQueryErrors(t *testing.T) {
 	var requests int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct{ Query string }
+		json.NewDecoder(r.Body).Decode(&req)
+		if strings.Contains(req.Query, "pullRequests(") {
+			fmt.Fprint(w, `{"data":{"viewer":{"pullRequests":{"nodes":[]}}}}`)
+			return
+		}
 		requests++
 		if requests > 1 {
 			http.Error(w, "bad gateway", http.StatusBadGateway)

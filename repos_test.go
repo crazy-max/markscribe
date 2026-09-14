@@ -26,6 +26,10 @@ func TestRecentReleasesQueriesViewerRepositories(t *testing.T) {
 
 		query := strings.ReplaceAll(req.Query, " ", "")
 		switch {
+		case strings.Contains(query, "pullRequests("):
+			fmt.Fprint(w, `{"data":{"viewer":{"pullRequests":{"nodes":[]}}}}`)
+		case strings.Contains(query, "history("):
+			fmt.Fprint(w, `{"data":{"repository":{"defaultBranchRef":{"target":{"history":{"nodes":[{"authoredDate":"2026-07-28T00:00:00Z"}]}}}}}}`)
 		case strings.Contains(query, "repositories("):
 			repositoryQueries++
 			if strings.Contains(query, "repositoriesContributedTo") {
@@ -34,11 +38,8 @@ func TestRecentReleasesQueriesViewerRepositories(t *testing.T) {
 			if strings.Contains(query, "releases(") {
 				t.Fatalf("expected repository candidate query to avoid nested releases, got %s", req.Query)
 			}
-			if !strings.Contains(query, "repositories(first:$count,affiliations:[OWNER,COLLABORATOR,ORGANIZATION_MEMBER],privacy:PUBLIC,orderBy:{field:PUSHED_AT,direction:DESC})") {
+			if !strings.Contains(query, "repositories(first:20,after:$after,affiliations:[OWNER,COLLABORATOR,ORGANIZATION_MEMBER],privacy:PUBLIC,isFork:false,orderBy:{field:PUSHED_AT,direction:DESC})") {
 				t.Fatalf("expected viewer repositories query, got %s", req.Query)
-			}
-			if got := req.Variables["count"]; got != float64(12) {
-				t.Fatalf("unexpected count variable: %#v", got)
 			}
 
 			w.Header().Set("Content-Type", "application/json")
@@ -155,22 +156,6 @@ func TestRecentReleasesQueriesViewerRepositories(t *testing.T) {
 	}
 }
 
-func TestRecentReleaseRepositoryLimit(t *testing.T) {
-	tests := map[int]int{
-		0:  0,
-		1:  11,
-		5:  15,
-		10: 20,
-		30: 20,
-	}
-
-	for count, want := range tests {
-		if got := recentReleaseRepositoryLimit(count); got != want {
-			t.Fatalf("count %d: expected %d, got %d", count, want, got)
-		}
-	}
-}
-
 func TestRecentReleasesWrapsRepositoryQueryErrors(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad gateway", http.StatusBadGateway)
@@ -188,7 +173,7 @@ func TestRecentReleasesWrapsRepositoryQueryErrors(t *testing.T) {
 		if r == nil {
 			t.Fatal("expected panic")
 		}
-		if !strings.Contains(fmt.Sprint(r), "querying recent release repository candidates") {
+		if !strings.Contains(fmt.Sprint(r), "querying recent contribution repository candidates") {
 			t.Fatalf("expected repository query context, got %v", r)
 		}
 	}()
@@ -199,6 +184,16 @@ func TestRecentReleasesWrapsRepositoryQueryErrors(t *testing.T) {
 func TestRecentReleasesWrapsReleaseQueryErrors(t *testing.T) {
 	var requests int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct{ Query string }
+		json.NewDecoder(r.Body).Decode(&req)
+		if strings.Contains(req.Query, "pullRequests(") {
+			fmt.Fprint(w, `{"data":{"viewer":{"pullRequests":{"nodes":[]}}}}`)
+			return
+		}
+		if strings.Contains(req.Query, "history(") {
+			fmt.Fprint(w, `{"data":{"repository":{"defaultBranchRef":{"target":{"history":{"nodes":[{"authoredDate":"2026-07-28T00:00:00Z"}]}}}}}}`)
+			return
+		}
 		requests++
 		if requests > 1 {
 			http.Error(w, "bad gateway", http.StatusBadGateway)
@@ -249,8 +244,8 @@ func TestRecentReleasesWrapsReleaseQueryErrors(t *testing.T) {
 }
 
 func TestRecentReleaseQueryAvoidsContributionAggregates(t *testing.T) {
-	query, err := graphql.ConstructQuery(&recentReleasesQuery{}, map[string]interface{}{
-		"count": graphql.Int(10),
+	query, err := graphql.ConstructQuery(&recentContributionRepositoriesQuery{}, map[string]interface{}{
+		"after": (*graphql.String)(nil),
 	})
 	if err != nil {
 		t.Fatal(err)

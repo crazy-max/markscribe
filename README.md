@@ -46,6 +46,11 @@ Published: {{humanize .PublishedAt}}
 
 ### Your recent contributions
 
+Returns public, non-fork repositories ordered by your latest authored commit on
+their default branch. Repository discovery paginates your affiliated repositories
+and repositories from your merged pull requests, then verifies commit authorship.
+The profile repository is excluded.
+
 ```
 {{range recentContributions 10}}
 Name: {{.Repo.Name}}
@@ -135,6 +140,12 @@ This function requires GitHub authentication with the following API scopes:
 `repo:status`, `public_repo`, `read:user`.
 
 ### Recent releases you contributed to
+
+Uses the same verified repositories as recent contributions, ordered by release
+publication date rather than your contribution date. Drafts and prereleases are
+excluded. Discovery reads all candidate pages using small, separate GraphQL
+requests to avoid expensive contribution aggregates; large accounts take more
+requests to render.
 
 ```
 {{range recentReleases 10}}
