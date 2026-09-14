@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,6 +11,50 @@ import (
 
 	graphql "github.com/hasura/go-graphql-client"
 )
+
+func TestRepositoryQueriesUseScalarStarCount(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct{ Query string }
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Error(err)
+			return
+		}
+		if strings.Contains(req.Query, "stargazers") || !strings.Contains(req.Query, "stargazerCount") {
+			t.Errorf("expected scalar star count, got %s", req.Query)
+		}
+		fields := map[string]interface{}{
+			"nameWithOwner": "moby/moby", "url": "https://github.com/moby/moby",
+			"description": "Moby", "isPrivate": false, "stargazerCount": 70000,
+		}
+		if strings.Contains(req.Query, "releases(") {
+			fields["releases"] = map[string]interface{}{"nodes": []interface{}{
+				map[string]interface{}{"tagName": "v1", "publishedAt": "2026-09-14T00:00:00Z"},
+			}}
+		} else {
+			fields["isFork"] = false
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(map[string]interface{}{"data": map[string]interface{}{"repository": fields}}); err != nil {
+			t.Error(err)
+		}
+	}))
+	defer server.Close()
+	previous := gitHubClient
+	gitHubClient = newGitHubGraphQLClient(server.URL, server.Client(), 0)
+	t.Cleanup(func() { gitHubClient = previous })
+	var query contributionRepositoryQuery
+	if err := queryGitHub(context.Background(), "test", &query, map[string]interface{}{
+		"owner": graphql.String("moby"), "name": graphql.String("moby"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := repoFromQL(query.Repository.qlRepository); got.Stargazers != 70000 {
+		t.Errorf("contribution star count: %d", got.Stargazers)
+	}
+	if got := repo("moby", "moby"); got.Stargazers != 70000 {
+		t.Errorf("custom repository star count: %d", got.Stargazers)
+	}
+}
 
 func TestRecentReleasesQueriesViewerRepositories(t *testing.T) {
 	var repositoryQueries int
@@ -55,7 +100,7 @@ func TestRecentReleasesQueriesViewerRepositories(t *testing.T) {
 										"url": "https://github.com/example/older",
 										"description": "Older repo",
 										"isPrivate": false,
-										"stargazers": {"totalCount": 1}
+										"stargazerCount": 1
 									}
 								},
 								{
@@ -65,7 +110,7 @@ func TestRecentReleasesQueriesViewerRepositories(t *testing.T) {
 										"url": "https://github.com/example/newer",
 										"description": "Newer repo",
 										"isPrivate": false,
-										"stargazers": {"totalCount": 2}
+										"stargazerCount": 2
 									}
 								}
 							]
@@ -213,7 +258,7 @@ func TestRecentReleasesWrapsReleaseQueryErrors(t *testing.T) {
 									"url": "https://github.com/example/repo",
 									"description": "Example repo",
 									"isPrivate": false,
-									"stargazers": {"totalCount": 1}
+									"stargazerCount": 1
 								}
 							}
 						]
